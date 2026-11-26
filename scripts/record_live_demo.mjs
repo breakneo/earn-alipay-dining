@@ -229,15 +229,25 @@ async function main() {
     await cdp.eval(`document.querySelector('.picker-option[data-opt-value="hz"]')?.click()`);
     await recordHold(1200);
 
-    // 3. 点击查询
-    await setCaption("步骤 2：实时筛选指定范围内高分饭馆，并按 4 人配好不浪费的一整桌菜");
+    // 3. 点击查询（录下真实逐店流式加载过程：先秒出真实餐厅卡，再逐家亮出菜单与预算）
+    await setCaption("步骤 2：实时筛选指定范围内高分饭馆，拿到一家立刻展示一家，不干等");
     await cdp.eval(`document.getElementById("submitBtn")?.click()`);
 
+    let scrolledToResults = false;
     let rendered = false;
     for (let i = 0; i < 280; i++) {
       await grabFrame();
-      const done = await cdp.eval(`!document.getElementById("resultsSection")?.classList.contains("hidden") && document.querySelectorAll(".shop-card").length === 3`);
-      if (done) {
+      const stateInfo = await cdp.eval(`({
+        visible: !document.getElementById("resultsSection")?.classList.contains("hidden"),
+        cards: document.querySelectorAll(".shop-card").length,
+        ready: document.querySelectorAll(".shop-card.is-ready").length
+      })`);
+      if (stateInfo?.visible && stateInfo.cards === 3 && !scrolledToResults) {
+        scrolledToResults = true;
+        const top = await cdp.eval(`Math.max(0, document.getElementById("resultsSection").offsetTop - 20)`);
+        await scrollToY(top, 450);
+      }
+      if (stateInfo?.ready === 3) {
         rendered = true;
         break;
       }

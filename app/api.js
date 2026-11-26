@@ -1,8 +1,8 @@
 /**
  * 「今天吃这桌」后端通信层
- * - 同域部署（腾讯云 EdgeOne 自定义域名 / 边缘函数）自动直连 /api/poi 与 /api/chat（国内 4G/5G/支付宝扫码秒开，零跨域）
- * - 纯静态托管（如 GitHub Pages 或本地 http.server）自动回退到云端代理
- * - 单店并发推理（每家店独立轻量请求，3~5 秒秒回，彻底规避边缘函数长请求超时）
+ * - 同域部署（腾讯云 EdgeOne 自定义域名 / 边缘函数）自动直连 /api/poi 与 /api/chat（零跨域）
+ * - 手机弱网加固：每次请求自带超时控制、指数退避自动重连与 POST→GET 降级，绝不裸抛英文 Failed to fetch
+ * - 逐店并发流式回调：拿到一家店的配菜方案立即回调渲染一家，无需干等全部餐厅返回
  */
 
 import { extractJsonPayload, buildFallbackPlan, estimateMealBudget } from "./engine.js";
@@ -23,35 +23,132 @@ function getEndpoints() {
   return { poi: `${FALLBACK_WORKER}/poi`, chat: `${FALLBACK_WORKER}/chat` };
 }
 
-export async function fetchRealRestaurants({ location, city = "", cuisine = "", radius = 2000 }) {
-  const { poi } = getEndpoints();
-  const resp = await fetch(poi, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ location, city, cuisine, radius }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    throw new Error(data.error || `查询周边饭馆失败（HTTP ${resp.status}）`);
-  }
-  return data;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function callChat(messages, maxTokens = 750) {
-  const { chat } = getEndpoints();
-  const resp = await fetch(chat, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messages,
-      max_tokens: maxTokens,
-      temperature: 0.3,
-    }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    throw new Error(data.error || `智能配菜服务繁忙（HTTP ${resp.status}）`);
+export function formatFriendlyNetworkError(err, sceneLabel = "网络请求") {
+  const raw = String(err?.message || "");
+  if (err?.name === "AbortError" || /timeout|timed out|aborted/i.test(raw)) {
+    return `${sceneLabel}超时，当前手机网络可能存在抖动，请点击重试`;
   }
+  if (/failed to fetch|load failed|networkerror|network request failed|fetch/i.test(raw)) {
+    return `${sceneLabel}连接中断（已自动重连仍未成功），请检查当前 Wi-Fi / 4G/5G 网络或刷新页面后重试`;
+  }
+  return raw || `${sceneLabel}失败，请稍后重试`;
+}
+
+/**
+ * 带超时与自动重试的弱网健壮 JSON 请求
+ */
+async function fetchJsonResilient(
+  url,
+  options,
+  { timeoutMs = 10000, retries = 2, getFallbackUrl = null, signal = null, sceneLabel = "请求" } = {}
+) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (signal?.aborted) {
+      const abortErr = new Error("请求已取消");
+      abortErr.name = "UserAbortError";
+      throw abortErr;
+    }
+
+    const useGetFallback = attempt === retries && typeof getFallbackUrl === "function";
+    const reqUrl = useGetFallback ? getFallbackUrl() : url;
+    const reqInit = useGetFallback
+      ? { method: "GET", cache: "no-store", headers: { Accept: "application/json" } }
+      : { ...options, cache: "no-store" };
+
+    const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    signal?.addEventListener("abort", onExternalAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const resp = await fetch(reqUrl, { ...reqInit, signal: controller.signal });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok) {
+        return data;
+      }
+      const err = new Error(data.error || `${sceneLabel}繁忙（HTTP ${resp.status}）`);
+      err.status = resp.status;
+      // 4xx 客户端业务错误直接返回，无需重试
+      if (resp.status >= 400 && resp.status < 500 && resp.status !== 408 && resp.status !== 429) {
+        throw err;
+      }
+      lastErr = err;
+    } catch (err) {
+      if (signal?.aborted) {
+        const abortErr = new Error("请求已取消");
+        abortErr.name = "UserAbortError";
+        throw abortErr;
+      }
+      if (err?.status >= 400 && err?.status < 500 && err?.status !== 408 && err?.status !== 429) {
+        throw err;
+      }
+      lastErr = err;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onExternalAbort);
+    }
+
+    if (attempt < retries) {
+      await sleep(450 * (attempt + 1));
+    }
+  }
+  throw new Error(formatFriendlyNetworkError(lastErr, sceneLabel));
+}
+
+export async function fetchRealRestaurants({ location, city = "", cuisine = "", radius = 2000, count = 3, signal = null }) {
+  const { poi } = getEndpoints();
+  return fetchJsonResilient(
+    poi,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ location, city, cuisine, radius, count }),
+    },
+    {
+      timeoutMs: 10000,
+      retries: 2,
+      signal,
+      sceneLabel: "查询周边饭馆",
+      getFallbackUrl: () => {
+        const qs = new URLSearchParams({
+          location,
+          city,
+          cuisine,
+          radius: String(radius),
+          count: String(count),
+          _t: String(Date.now()),
+        });
+        return `${poi}?${qs.toString()}`;
+      },
+    }
+  );
+}
+
+async function callChat(messages, maxTokens = 620, { signal = null, retries = 1 } = {}) {
+  const { chat } = getEndpoints();
+  const data = await fetchJsonResilient(
+    chat,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        messages,
+        max_tokens: maxTokens,
+        temperature: 0.25,
+      }),
+    },
+    {
+      timeoutMs: 14500,
+      retries,
+      signal,
+      sceneLabel: "智能配菜",
+    }
+  );
   const content = data?.choices?.[0]?.message?.content || "";
   if (!content.trim()) {
     throw new Error("未能获取配菜建议，请稍后重试");
@@ -61,39 +158,40 @@ async function callChat(messages, maxTokens = 750) {
 
 /**
  * 为单家真实餐厅生成精准配菜、参考预算（不含酒水）与支付宝/口碑团购省钱策略
- * 单次请求轻量快速（约 3~5 秒），并发执行 3 家整体仅需约 5 秒且永不超时
+ * 紧凑 Schema + 620 token 上限，实测单店 4~8 秒稳定返回、规避边缘函数 15s 超时
  */
-async function generateSingleShopPlan({ anchor, restaurant, req, quota }) {
+export async function generateSingleShopPlan({ anchor, restaurant, req, quota, signal = null }) {
+  const targetDishCount = Math.min(Math.max(quota.totalDishes, 4), 7);
   const systemPrompt = [
     "你是「今天吃这桌」聚餐点菜专家（支付宝口碑与高德生态）。",
-    "要求：1) 严格围绕传入的真实餐厅菜系推荐具体常见招牌菜，严禁写「招牌主菜×2」这类泛泛占位词；",
-    "2) 严格避开用户忌口，菜品数遵循推荐配比，价格估算不含酒水并贴近该店人均×人数；",
-    "3) 严禁编造实时团购精确标价，仅给支付宝口碑/高德团购核销策略，不提非支付宝系第三方平台；",
-    "4) 仅输出合法精简 JSON，无多余文字。",
+    "要求：1) 围绕传入的真实餐厅与特色标签推荐具体常见招牌菜，严禁写「招牌主菜×2」这类泛泛占位词；",
+    "2) 严格避开用户忌口，总菜数控制在目标数量内，单价估算不含酒水并贴近人均×人数；",
+    "3) 严禁编造团购精确假价，仅给支付宝口碑/高德核销策略，不提非支付宝系第三方平台；",
+    "4) 仅输出合法紧凑 JSON，无多余说明。",
   ].join("\n");
 
   const userPrompt = JSON.stringify({
-    location: anchor?.name || req.location,
-    headcount: req.headcount,
+    loc: anchor?.name || req.location,
+    people: req.headcount,
     scene: req.scene,
-    targetPerCapita: req.perCapita,
-    targetTotalNoDrinks: req.totalBudget,
-    preferences: req.preferences || "无特殊忌口",
-    dishQuota: quota.formulaText,
-    restaurant: {
+    perCapita: req.perCapita,
+    totalNoDrinks: req.totalBudget,
+    pref: req.preferences || "无",
+    quota: `${quota.formulaText}（输出${targetDishCount}道代表菜）`,
+    shop: {
       name: restaurant.name,
       cuisine: restaurant.cuisine,
       rating: restaurant.rating || "暂无",
-      avgCost: restaurant.cost || req.perCapita,
-      distanceMeters: restaurant.distance ?? "未知",
-      address: restaurant.address,
+      cost: restaurant.cost || req.perCapita,
+      distM: restaurant.distance ?? "未知",
+      tags: (restaurant.tag || "").slice(0, 60),
     },
     schema: {
-      highlightTag: "4-7字卖点标签",
-      whyChoose: "2句简明推荐理由",
-      dishes: [{ category: "凉菜/硬菜/素菜/汤主食", name: "具体菜名", reason: "8字内理由", estPrice: 58 }],
-      groupBuyStrategy: "2句支付宝口碑/高德团购省钱策略（不编造假价）",
-      avoidTip: "1句点菜避坑提醒",
+      highlightTag: "4-6字卖点",
+      whyChoose: "1-2句简明推荐理由",
+      dishes: [{ category: "凉菜/硬菜/素菜/汤主食", name: "具体菜名", reason: "6字内理由", estPrice: 58 }],
+      groupBuyStrategy: "1-2句支付宝口碑/高德省钱策略",
+      avoidTip: "1句避坑提醒",
     },
   });
 
@@ -103,13 +201,14 @@ async function generateSingleShopPlan({ anchor, restaurant, req, quota }) {
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      720
+      620,
+      { signal, retries: 1 }
     );
     const parsed = extractJsonPayload(raw);
     if (!parsed || !Array.isArray(parsed.dishes) || parsed.dishes.length === 0) {
       throw new Error("格式解析失败");
     }
-    const dishes = parsed.dishes.slice(0, 10).map((d) => ({
+    const dishes = parsed.dishes.slice(0, 8).map((d) => ({
       category: String(d.category || "推荐菜"),
       name: String(d.name || "门店特色菜"),
       reason: String(d.reason || "口碑必点"),
@@ -135,40 +234,72 @@ async function generateSingleShopPlan({ anchor, restaurant, req, quota }) {
       avoidTip: String(parsed.avoidTip || ""),
       isFallback: false,
     };
-  } catch {
+  } catch (err) {
+    if (err?.name === "UserAbortError" || signal?.aborted) {
+      throw err;
+    }
     return buildFallbackPlan(restaurant, req, quota);
   }
 }
 
+export function buildOverallAdvice(plans, restaurants, req) {
+  const ready = plans.filter(Boolean);
+  const summaryParts = ready
+    .slice(0, 3)
+    .map((p) => `${p.highlightTag}选「${p.restaurantName.replace(/[\(（].*$/, "")}」`);
+  if (summaryParts.length >= 2) {
+    return `${summaryParts.join("，")}；共甄选 ${restaurants.length} 家贴合 ${req.headcount} 人预算（不含酒水）的饭馆。`;
+  }
+  return `已为你甄选 ${restaurants.length} 家贴合 ${req.headcount} 人「${req.scene}」预算（不含酒水）的饭馆。`;
+}
+
 /**
- * 并发池：支持 1~10 家餐厅快速并发配菜（最多 4 路并发，每店 3~5 秒返回）
+ * 逐店并发池：最多 3 路稳定并发，每拿到一家餐厅的配菜方案立刻触发 onShopReady 回调渲染
  */
-export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
-  const plans = new Array(restaurants.length);
-  const concurrency = Math.min(4, restaurants.length);
+export async function generateDiningPlans({
+  anchor,
+  restaurants,
+  req,
+  quota,
+  onShopReady = null,
+  signal = null,
+}) {
+  const plans = new Array(restaurants.length).fill(null);
+  const concurrency = Math.min(3, restaurants.length);
   let cursor = 0;
+  let completed = 0;
 
   async function worker() {
     while (cursor < restaurants.length) {
+      if (signal?.aborted) return;
       const idx = cursor++;
-      plans[idx] = await generateSingleShopPlan({
+      const plan = await generateSingleShopPlan({
         anchor,
         restaurant: restaurants[idx],
         req,
         quota,
+        signal,
       });
+      if (signal?.aborted) return;
+      plans[idx] = plan;
+      completed++;
+      if (typeof onShopReady === "function") {
+        onShopReady({
+          idx,
+          plan,
+          completed,
+          total: restaurants.length,
+        });
+      }
     }
   }
 
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
-  const summaryParts = plans.slice(0, 3).map((p) => `${p.highlightTag}选「${p.restaurantName.replace(/[\(（].*$/, "")}」`);
-  const overallAdvice =
-    summaryParts.length >= 2
-      ? `${summaryParts.join("，")}；共甄选 ${restaurants.length} 家贴合 ${req.headcount} 人预算（不含酒水）的饭馆。`
-      : `已为你甄选 ${restaurants.length} 家贴合 ${req.headcount} 人「${req.scene}」预算（不含酒水）的饭馆。`;
-
-  return { overallAdvice, plans };
+  return {
+    overallAdvice: buildOverallAdvice(plans, restaurants, req),
+    plans,
+  };
 }
 
 /**
@@ -208,7 +339,8 @@ export async function compareGroupBuyWithAI({ restaurant, req, estimatedTotal, p
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ],
-    750
+    750,
+    { retries: 1 }
   );
   const parsed = extractJsonPayload(raw);
   if (!parsed) {

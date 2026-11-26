@@ -16,7 +16,9 @@ import {
   buildInviteText,
   buildIcsCalendar,
   extractJsonPayload,
+  buildFallbackPlan,
 } from "../app/engine.js";
+import { formatFriendlyNetworkError, generateDiningPlans } from "../app/api.js";
 
 const SAMPLE_POIS = [
   {
@@ -235,4 +237,93 @@ test("extractJsonPayload 容错提取模型返回的 Markdown JSON 代码块", (
   const raw = '下面是推荐结果：\n```json\n{"summary":"ok","plans":[1,2,3]}\n```\n祝用餐愉快';
   const parsed = extractJsonPayload(raw);
   assert.deepEqual(parsed, { summary: "ok", plans: [1, 2, 3] });
+});
+
+test("formatFriendlyNetworkError 拦截英文 Failed to fetch 与超时并转为清晰中文提示", () => {
+  const e1 = formatFriendlyNetworkError(new TypeError("Failed to fetch"), "查询周边饭馆");
+  assert.ok(!e1.includes("Failed to fetch") && e1.includes("查询周边饭馆") && e1.includes("网络"));
+
+  const e2 = formatFriendlyNetworkError(new TypeError("Load failed"), "智能配菜");
+  assert.ok(!e2.includes("Load failed") && e2.includes("智能配菜"));
+
+  const abortErr = new Error("Aborted");
+  abortErr.name = "AbortError";
+  const e3 = formatFriendlyNetworkError(abortErr, "查询周边饭馆");
+  assert.ok(e3.includes("超时") && e3.includes("重试"));
+});
+
+test("buildFallbackPlan 融合高德真实招牌标签，且支持 10 家边界去重挑选", () => {
+  const manyPois = Array.from({ length: 14 }, (_, i) => ({
+    id: `m${i}`,
+    name: `测试餐厅${i + 1}`,
+    cuisine: i % 2 === 0 ? "浙江菜" : "广东菜",
+    rawType: "餐饮服务;中餐厅;浙江菜",
+    address: `测试路${i + 1}号`,
+    location: "120.128,30.275",
+    distance: 100 + i * 120,
+    rating: 4.5 + (i % 4) * 0.1,
+    cost: 95 + i * 5,
+    tag: "龙井虾仁,东坡肉,西湖醋鱼",
+  }));
+  const { picked, backups } = selectTopRestaurants(
+    manyPois,
+    { headcount: 6, perCapita: 120, scene: "朋友小聚", radius: 3000 },
+    10
+  );
+  assert.equal(picked.length, 10);
+  assert.equal(backups.length, 4);
+
+  const q = computeDishQuota(4, "朋友小聚");
+  const fb = buildFallbackPlan(manyPois[0], { headcount: 4, perCapita: 120, scene: "朋友小聚", preferences: "不吃辣" }, q);
+  assert.equal(fb.isFallback, true);
+  assert.ok(fb.dishes.some((d) => d.name.includes("龙井虾仁")), "兜底菜单应利用高德真实招牌标签");
+});
+
+test("generateDiningPlans 拿到一家餐厅配菜即立刻回调 onShopReady，不等待全部结束", async () => {
+  const originalFetch = globalThis.fetch;
+  const delays = [120, 20, 60];
+  let callIdx = 0;
+  globalThis.fetch = async () => {
+    const myIdx = callIdx++;
+    await new Promise((r) => setTimeout(r, delays[myIdx] || 20));
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                highlightTag: `卖点${myIdx}`,
+                whyChoose: "味道稳妥",
+                dishes: [{ category: "硬菜", name: `招牌菜${myIdx}`, reason: "必点", estPrice: 88 }],
+                groupBuyStrategy: "先看口碑代金券",
+                avoidTip: "别点太多",
+              }),
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+  try {
+    const arrivals = [];
+    const req = { location: "黄龙", headcount: 4, perCapita: 120, totalBudget: 480, scene: "朋友小聚", preferences: "" };
+    const quota = computeDishQuota(4, "朋友小聚");
+    const res = await generateDiningPlans({
+      anchor: { name: "黄龙" },
+      restaurants: SAMPLE_POIS.slice(0, 3),
+      req,
+      quota,
+      onShopReady: ({ idx, completed, total }) => arrivals.push({ idx, completed, total }),
+    });
+    assert.equal(arrivals.length, 3);
+    assert.deepEqual(
+      arrivals.map((a) => a.completed),
+      [1, 2, 3]
+    );
+    assert.equal(arrivals[0].idx, 1, "最先完成的第2家店应最先触发渲染回调");
+    assert.equal(res.plans.filter((p) => !p.isFallback).length, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

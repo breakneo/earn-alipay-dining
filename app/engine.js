@@ -435,30 +435,40 @@ export function buildFallbackPlan(restaurant, req, quota) {
     headcount: req.headcount,
     targetPerCapita: req.perCapita,
   });
+  const tagList = String(restaurant.tag || "")
+    .split(/[,，、;；]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2 && s.length <= 12 && !/堂食|套餐|双人餐|单人餐|下午茶/.test(s));
   const baseUnit = Math.max(Math.round(est.estimatedTotal / Math.max(quota.totalDishes, 3)), 28);
   const dishes = [];
   if (quota.cold > 0) {
     dishes.push({
-      category: "凉菜开胃",
-      name: `${restaurant.cuisine}时令爽口凉菜 ×${quota.cold}`,
+      category: "凉菜",
+      name: `${restaurant.cuisine}爽口凉菜 ×${quota.cold}`,
       reason: "先上桌垫胃，避免等热菜冷场",
       estPrice: Math.round(baseUnit * 0.55) * quota.cold,
     });
   }
+  const hotName =
+    tagList.length >= 2
+      ? `${tagList.slice(0, 2).join(" / ")}（门店招牌）`
+      : tagList.length === 1
+        ? `${tagList[0]}等招牌主菜 ×${quota.hot}`
+        : `门店口碑招牌主菜 ×${quota.hot}`;
   dishes.push({
-    category: "招牌硬菜",
-    name: `门店口碑 Top 招牌主菜 ×${quota.hot}`,
+    category: "硬菜",
+    name: hotName,
     reason: `按${req.headcount}人「${req.scene}」配足核心硬菜${req.preferences ? `（注意：${req.preferences}）` : ""}`,
     estPrice: Math.round(baseUnit * 1.35) * quota.hot,
   });
   dishes.push({
-    category: "解腻时蔬",
+    category: "素菜",
     name: `清炒当季时蔬 ×${quota.veg}`,
     reason: "荤素平衡不腻口",
     estPrice: Math.round(baseUnit * 0.6) * quota.veg,
   });
   dishes.push({
-    category: "汤品主食",
+    category: "汤主食",
     name: `例汤或特色主食 ×${quota.soupOrStaple}`,
     reason: "收尾压饱，控制总价不超支",
     estPrice: Math.round(baseUnit * 0.85) * quota.soupOrStaple,

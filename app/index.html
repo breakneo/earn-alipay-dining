@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>今天吃这桌 · 聚餐选店配菜与团购参谋</title>
+    <script>
+      if (location.protocol === "http:" && location.hostname === "eat.breakneo.dpdns.org") {
+        location.replace("https://" + location.host + location.pathname + location.search + location.hash);
+      }
+    </script>
     <link rel="icon" type="image/png" href="./favicon.png" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -22,7 +27,7 @@
       <main>
         <!-- 输入表单卡 -->
         <section class="panel search-panel" aria-label="聚餐需求输入">
-          <form id="diningForm" class="dining-form">
+          <form id="diningForm" class="dining-form" onsubmit="event.preventDefault()">
             <!-- 快捷试玩（与下方所有下拉 100% 统一视觉与精致弹窗） -->
             <div class="form-row-1 preset-row">
               <div class="field">
