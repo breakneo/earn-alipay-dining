@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   normalizeBudget,
+  normalizeShopCount,
+  normalizeRadius,
+  formatDistance,
   computeDishQuota,
+  selectTopRestaurants,
   selectTopThreeRestaurants,
   estimateMealBudget,
   calculateAaSplit,
@@ -104,9 +108,24 @@ const SAMPLE_POIS = [
     tel: "",
     openTime: "11:00-21:00",
   },
+  {
+    id: "p7",
+    name: "鲜味小馆(西溪店)",
+    cuisine: "海鲜酒楼",
+    rawType: "餐饮服务;中餐厅;海鲜酒楼",
+    address: "天目山路188号",
+    city: "杭州市",
+    district: "西湖区",
+    location: "120.122,30.272",
+    distance: 1350,
+    rating: 4.6,
+    cost: 132,
+    tel: "",
+    openTime: "11:00-21:30",
+  },
 ];
 
-test("normalizeBudget 正确换算人均与总预算", () => {
+test("normalizeBudget / normalizeShopCount / normalizeRadius / formatDistance 边界正确", () => {
   const per = normalizeBudget({ headcount: 5, budgetMode: "per_capita", budgetValue: 120 });
   assert.equal(per.perCapita, 120);
   assert.equal(per.totalBudget, 600);
@@ -114,6 +133,14 @@ test("normalizeBudget 正确换算人均与总预算", () => {
   const tot = normalizeBudget({ headcount: 8, budgetMode: "total", budgetValue: 1200 });
   assert.equal(tot.perCapita, 150);
   assert.equal(tot.totalBudget, 1200);
+
+  assert.equal(normalizeShopCount(0), 1);
+  assert.equal(normalizeShopCount(15), 10);
+  assert.equal(normalizeShopCount(5), 5);
+  assert.equal(normalizeRadius(500), 500);
+  assert.equal(normalizeRadius(9999), 5000);
+  assert.equal(formatDistance(360), "360米");
+  assert.equal(formatDistance(1500), "1.5公里");
 });
 
 test("computeDishQuota 按人数与聚餐场景输出合理防浪费菜量配比", () => {
@@ -128,23 +155,27 @@ test("computeDishQuota 按人数与聚餐场景输出合理防浪费菜量配比
   assert.ok(q8.totalDishes >= 9 && q8.totalDishes <= 12);
 });
 
-test("selectTopThreeRestaurants 过滤奶茶档口与严重超预算，且避免同品牌重复", () => {
-  const { picked, backups } = selectTopThreeRestaurants(SAMPLE_POIS, {
+test("selectTopRestaurants 支持自定义 1~10 家数量，过滤奶茶档口且避免同品牌重复", () => {
+  const { picked: p3, backups: b3 } = selectTopThreeRestaurants(SAMPLE_POIS, {
     headcount: 4,
     perCapita: 120,
     scene: "朋友小聚",
     preferences: "不吃辣",
+    radius: 2000,
   });
-  assert.equal(picked.length, 3);
-  const names = picked.map((r) => r.name);
-  assert.ok(!names.includes("某奶茶果茶档口"), "不应把奶茶档口当聚餐饭馆");
-  assert.ok(!names.includes("某高端黑珍珠法餐"), "人均680严重超出120预算应排在后位");
-  assert.equal(
-    names.filter((n) => n.startsWith("老字号杭帮菜")).length,
-    1,
-    "同名品牌分店不应同时占据3家候选"
+  assert.equal(p3.length, 3);
+  const names3 = p3.map((r) => r.name);
+  assert.ok(!names3.includes("某奶茶果茶档口"), "不应把奶茶档口当聚餐饭馆");
+  assert.ok(!names3.includes("某高端黑珍珠法餐"), "人均680严重超出120预算应排在后位");
+  assert.equal(names3.filter((n) => n.startsWith("老字号杭帮菜")).length, 1);
+  assert.ok(b3.length >= 1);
+
+  const { picked: p5 } = selectTopRestaurants(
+    SAMPLE_POIS,
+    { headcount: 4, perCapita: 120, scene: "朋友小聚", radius: 2000 },
+    5
   );
-  assert.ok(backups.length >= 1, "应保留可替换的真实备选店");
+  assert.equal(p5.length, 5);
 });
 
 test("estimateMealBudget 计算预计总价区间与预算对比状态", () => {
@@ -175,23 +206,18 @@ test("calculateAaSplit 支持均摊与区分酒水分摊", () => {
   assert.equal(withDrinks.nonDrinkerPerPerson, 120);
 });
 
-test("buildAbaoPrompt / buildAmapUrl / buildInviteText / buildIcsCalendar 产出完整真实工具文本", () => {
+test("buildAbaoPrompt 不含竞品字样，buildInviteText 简洁不含点菜与预计花销", () => {
   const r = SAMPLE_POIS[0];
   const prompt = buildAbaoPrompt(r, 4, 120);
-  assert.ok(prompt.includes(r.name) && prompt.includes("团购") && prompt.includes("4人"));
+  assert.ok(prompt.includes(r.name) && prompt.includes("支付宝") && prompt.includes("口碑") && prompt.includes("4人"));
+  assert.ok(!prompt.includes("点评") && !prompt.includes("美团"));
 
   const url = buildAmapUrl(r);
-  assert.ok(url.startsWith("https://uri.amap.com/marker?"));
-  assert.ok(url.includes("120.128,30.275"));
+  assert.ok(url.startsWith("https://uri.amap.com/marker?") && url.includes("120.128,30.275"));
 
-  const invite = buildInviteText({
-    restaurant: r,
-    headcount: 4,
-    scene: "朋友小聚",
-    dishes: ["龙井虾仁", "东坡肉", "清炒时蔬"],
-    estimatedTotal: 460,
-  });
-  assert.ok(invite.includes(r.name) && invite.includes("龙井虾仁") && invite.includes("460"));
+  const invite = buildInviteText({ restaurant: r, headcount: 4, scene: "朋友小聚" });
+  assert.ok(invite.includes(r.name) && invite.includes("高德导航"));
+  assert.ok(!invite.includes("参考点菜") && !invite.includes("预计花销"), "约饭通知不应包含参考点菜与预计花销");
 
   const ics = buildIcsCalendar({
     restaurant: r,

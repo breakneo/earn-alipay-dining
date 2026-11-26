@@ -1,14 +1,15 @@
 """
 生成「今天吃这桌」纯中文 16:9 高清参赛封面图（1920x1080，<=5MB）
-左侧：清晰品牌主标题 + 4 大核心价值胶囊 + 真实数据源背书
-右侧：真实运行产品界面高清截图（圆角卡片 + 柔和投影）
+使用正式品牌图标 app/logo.png + 真实运行界面高清截图
 """
 
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
+APP = ROOT / "app"
 SUB = ROOT / "submission"
+LOGO = APP / "logo.png"
 SCREEN = SUB / "screen_results.png"
 OUT = SUB / "cover_16x9.png"
 
@@ -40,7 +41,6 @@ def draw_rounded_rect(draw, xy, radius, fill, outline=None, width=1):
 def main():
     W, H = 1920, 1080
     img = Image.new("RGB", (W, H), "#FAF5EE")
-    draw = ImageDraw.Draw(img)
 
     # 背景柔和暖光装饰圆
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -61,21 +61,23 @@ def main():
     draw_rounded_rect(draw, (76, 86, 516, 146), 30, fill="#FFF0EA", outline="#F3C5B4", width=2)
     draw.text((104, 98), "生活好帮手 · 吃好每顿饭", fill="#C8411D", font=f_badge)
 
-    # 品牌图标 + 大标题
-    draw_rounded_rect(draw, (76, 192, 194, 310), 28, fill="#D94E28")
-    draw.text((103, 202), "桌", fill="#FFFFFF", font=load_font(68, 2))
+    # 正式品牌图标 + 大标题
+    if LOGO.exists():
+        logo_img = Image.open(LOGO).convert("RGBA").resize((120, 120), Image.Resampling.LANCZOS)
+        img.paste(logo_img, (76, 190), logo_img)
+    draw = ImageDraw.Draw(img)
     draw.text((222, 192), "今天吃这桌", fill="#1F1D1A", font=f_title)
 
     # 一句话核心卖点
-    draw.text((80, 352), "聚餐选 3 家真馆子 · 配好一桌不浪费的菜", fill="#3F3A34", font=f_sub)
-    draw.text((80, 410), "团购比价算差价 · 饭后一键支付宝群收款", fill="#3F3A34", font=f_sub)
+    draw.text((80, 352), "自选距离与家数挑好饭馆 · 按人数配好一桌菜", fill="#3F3A34", font=f_sub)
+    draw.text((80, 410), "支付宝口碑团购比价算差价 · 一键发群约饭通知", fill="#3F3A34", font=f_sub)
 
-    # 4 个能力要点卡片（精确留白，绝不重叠不溢出）
+    # 4 个能力要点卡片
     points = [
-        ("01 高德真实选店", "按评分、人均、距离与忌口挑出 3 家真店", "#D94E28", "#FFF0EA"),
+        ("01 附近真店精选", "按距离、口碑、人均与忌口自选 1-10 家真店", "#D94E28", "#FFF0EA"),
         ("02 按人数配好菜", "凉菜、硬菜、时蔬与汤主食精准配比不浪费", "#237A47", "#EBF7EF"),
-        ("03 团购比价防坑", "一键问阿宝查团购，贴套餐实算省多少钱", "#1677FF", "#EDF5FF"),
-        ("04 定店与群收款", "约饭通知、日历提醒、喝酒 AA 一步到位", "#8A5300", "#FFF6E6"),
+        ("03 口碑团购比价", "一键问阿宝查团购，贴套餐实算省多少钱", "#1677FF", "#EDF5FF"),
+        ("04 约饭定店通知", "一键发群定位、导日历，直达高德精准导航", "#8A5300", "#FFF6E6"),
     ]
     y = 508
     for head, desc, fg, bg in points:
@@ -85,8 +87,7 @@ def main():
         draw.text((346, y + 30), desc, fill="#524C45", font=f_desc)
         y += 108
 
-    # 底部技术背书（纯中文）
-    draw.text((80, 986), "高德开放平台实时商户数据  ×  免配置云端大模型  ×  打开即用", fill="#7D756B", font=f_foot)
+    draw.text((80, 986), "高德地图商户数据  ×  支付宝口碑阿宝联动  ×  手机电脑自适应打开即用", fill="#7D756B", font=f_foot)
 
     # 右侧嵌入真实运行界面高清截图
     if SCREEN.exists():
@@ -103,14 +104,12 @@ def main():
         px = 1852 - target_w
         py = (H - target_h) // 2
 
-        # 卡片阴影
         shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         sd = ImageDraw.Draw(shadow)
         sd.rounded_rectangle((px - 6, py + 12, px + target_w + 6, py + target_h + 18), radius=26, fill=(31, 29, 26, 48))
         shadow = shadow.filter(ImageFilter.GaussianBlur(18))
         img = Image.alpha_composite(img.convert("RGBA"), shadow).convert("RGB")
 
-        # 圆角蒙版贴图
         mask = Image.new("L", (target_w, target_h), 0)
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, target_w, target_h), radius=22, fill=255)
         img.paste(resized, (px, py), mask)

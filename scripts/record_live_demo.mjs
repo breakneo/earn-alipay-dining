@@ -1,10 +1,8 @@
 /**
- * 「今天吃这桌」真实动态交互录屏与高清截图脚本
- * - 启动独立无头 Chrome（端口 4173 合法来源，不触碰主人任何浏览器窗口）
- * - 真实点击输入地标「杭州黄龙万科中心」、人数、预算与「不吃辣」忌口
- * - 实时调用 Cloudflare Worker（高德真实饭馆 + GLM-5.3-Flash 配菜）
- * - 真实展开团购比价计算器、点击「就定这家」并操作支付宝群收款 AA 分账
- * - 通过 CDP 抓帧 + ffmpeg 合成 1080p MP4（绝非静态 PPT）并顺带保存真实运行高清截图
+ * 「今天吃这桌」真实动态交互录屏 + 桌面/手机双端视觉自检脚本
+ * - 启动独立无头 Chrome（不触碰主人任何浏览器窗口）
+ * - 真实选择快捷试玩下拉、范围、数量与忌口并触发真实查询
+ * - 录制 1080p 真机动态操作视频 + 截取桌面与手机（390x844）高清截图并严格校验手机端零横向滚动条
  */
 
 import http from "node:http";
@@ -112,7 +110,7 @@ class CdpClient {
 async function main() {
   fs.mkdirSync(SUB_DIR, { recursive: true });
   const { server, port } = await startStaticServer(4173);
-  const cdpPort = 19322 + Math.floor(Math.random() * 800);
+  const cdpPort = 19422 + Math.floor(Math.random() * 600);
   const tmpProfile = fs.mkdtempSync(path.join(os.tmpdir(), "today-table-rec-"));
 
   const chrome = spawn(
@@ -150,9 +148,6 @@ async function main() {
     ],
     { stdio: ["pipe", "ignore", "pipe"] }
   );
-
-  let ffmpegErr = "";
-  ffmpeg.stderr.on("data", (d) => (ffmpegErr += d.toString()));
 
   let cdp;
   let totalFrames = 0;
@@ -218,28 +213,26 @@ async function main() {
       deviceScaleFactor: 1,
       mobile: false,
     });
+    await sleep(600);
 
-    // 等健康检测变绿
-    for (let i = 0; i < 30; i++) {
-      const ready = await cdp.eval(`document.getElementById("serviceStatus")?.classList.contains("ready")`);
-      if (ready) break;
-      await sleep(300);
-    }
-
-    // 1. 展示首屏（先截取干净无字幕首屏图，再开始录屏）
-    await setCaption("今天吃这桌 · 高德真实选店 + AI 按人数配菜 + 团购比价与 AA 算账");
+    // 1. 干净首屏截图与录屏开场
+    await savePng("screen_home.png");
+    await setCaption("今天吃这桌 · 选定地点范围与家数，挑好饭馆、配好一桌菜、算清团购");
     await recordHold(2200);
 
-    // 2. 真实勾选「不吃辣」与设置场景
-    await setCaption("步骤 1：输入地标「杭州黄龙万科中心」、4人朋友小聚、人均120、勾选「不吃辣」");
-    await cdp.eval(`document.querySelector('.tag-chip[data-tag="不吃辣"]')?.click()`);
-    await recordHold(1500);
+    // 2. 通过快捷试玩下拉选单填入场景
+    await setCaption("步骤 1：下拉选定快捷场景或自定义地点、搜索范围、筛选家数（1-10家）与忌口");
+    await cdp.eval(`(() => {
+      const sel = document.getElementById("presetSelect");
+      sel.value = "hz";
+      sel.dispatchEvent(new Event("change"));
+    })()`);
+    await recordHold(1600);
 
-    // 3. 点击主按钮真实发起高德 + GLM-5.3-Flash 查询
-    await setCaption("步骤 2：实时检索高德周边真实营业餐厅，并由 GLM-5.3-Flash 配好 3 桌菜");
+    // 3. 点击查询
+    await setCaption("步骤 2：实时筛选指定范围内高分饭馆，并按 4 人配好不浪费的一整桌菜");
     await cdp.eval(`document.getElementById("submitBtn")?.click()`);
 
-    // 录制真实加载态直到 3 家结果卡片真正渲染（最多等 45 秒）
     let rendered = false;
     for (let i = 0; i < 280; i++) {
       await grabFrame();
@@ -250,73 +243,81 @@ async function main() {
       }
       await sleep(150);
     }
-    if (!rendered) {
-      throw new Error("等待 3 家推荐餐厅渲染超时");
-    }
+    if (!rendered) throw new Error("等待 3 家推荐餐厅渲染超时");
     await sleep(400);
 
-    // 精准滚到对比表 + 3 家真店卡片顶部，截取干净高清结果图
     const resTop = await cdp.eval(`Math.max(0, document.getElementById("resultsSection").offsetTop - 20)`);
     await scrollToY(resTop, 700);
     await setCaption("");
     await savePng("screen_results.png");
-    await setCaption("3 家高德真实高分饭馆横评：评分、距离、真实人均与本桌配菜估价一目了然");
+    await setCaption("3 家候选饭馆横向对比：口碑、距离、参考人均与本桌配菜估价一目了然");
     await recordHold(3000);
 
-    // 4. 下滚查看 3 家店详细点菜清单与预算拆解
     await scrollToY(resTop + 340, 800);
-    await setCaption("每家店按 4 人配比生成防浪费菜单（凉菜/硬菜/时蔬/汤主食），标注估算总价与人均");
-    await recordHold(3200);
+    await setCaption("按人数与忌口生成防浪费菜单，标明每道菜估价与预算结余");
+    await recordHold(2800);
 
-    // 5. 真实展开第 1 家店的团购比价计算器，填入示例团购并运行真实 AI 核算
-    await scrollToY(1120, 700);
-    await setCaption("步骤 3：粘贴支付宝/口碑团购文案，AI 实算份量、忌口冲突与团购省钱金额");
+    // 4. 展开支付宝/口碑团购比价器并实算
+    await scrollToY(resTop + 700, 700);
+    await setCaption("步骤 3：粘贴支付宝/口碑团购文案，实算份量、忌口冲突与比单点省多少钱");
     await cdp.eval(`document.querySelector('[data-toggle-gb="0"]')?.click()`);
-    await recordHold(800);
+    await recordHold(700);
     await cdp.eval(`document.querySelector('[data-fill-sample-gb="0"]')?.click()`);
-    await recordHold(1000);
+    await recordHold(900);
     await cdp.eval(`document.querySelector('[data-run-gb="0"]')?.click()`);
     for (let i = 0; i < 120; i++) {
       await grabFrame();
       const ready = await cdp.eval(`!document.getElementById("gb-result-0")?.classList.contains("hidden")`);
       if (ready) break;
-      await sleep(140);
+      await sleep(150);
     }
-    await scrollToY(1340, 600);
+    await scrollToY(resTop + 920, 600);
     await setCaption("");
     await savePng("screen_groupbuy.png");
-    await setCaption("团购比价核算完成：自动评估够不够吃、避坑提醒及比纯单点省多少钱");
-    await recordHold(3000);
-
-    // 6. 点击「就定这家」，演示群约饭通知 + 区分喝酒/不喝酒的支付宝群收款 AA 精算器
-    await setCaption("步骤 4：点击「就定这家」，一键生成约饭群通知、日历提醒与支付宝群收款 AA");
-    await cdp.eval(`document.querySelector('[data-pick-idx="0"]')?.click()`);
-    await sleep(300);
-    const decTop = await cdp.eval(`Math.max(0, document.getElementById("decisionPanel").offsetTop - 40)`);
-    await scrollToY(decTop, 800);
-    await recordHold(1400);
-
-    // 实时输入酒水费用演示分摊
-    await cdp.eval(`(() => {
-      const d = document.getElementById("aaDrinkInput");
-      const p = document.getElementById("aaDrinkersInput");
-      d.value = "120";
-      p.value = "2";
-      d.dispatchEvent(new Event("input"));
-      p.dispatchEvent(new Event("input"));
-    })()`);
-    await setCaption("");
-    await savePng("screen_decision.png");
-    await setCaption("支持区分喝酒与不喝酒人员精准分摊，一键复制支付宝群收款账单");
+    await setCaption("团购比价核算完成：自动判断是否划算、要不要补菜以及能省多少");
     await recordHold(2800);
 
-    // 7. 结尾回到顶部收尾
+    // 5. 点击「就定这家 · 生成约饭通知」
+    await setCaption("步骤 4：点击「就定这家 · 生成约饭通知」，一键发群定位、导日历与高德导航");
+    await cdp.eval(`document.querySelector('[data-pick-idx="0"]')?.click()`);
+    await sleep(300);
+    const decTop = await cdp.eval(`Math.max(0, document.getElementById("decisionPanel").offsetTop - 36)`);
+    await scrollToY(decTop, 800);
+    await setCaption("");
+    await savePng("screen_decision.png");
+    await setCaption("简洁得体的群约饭通知与高德导航直达，一键复制发群里即可赴约");
+    await recordHold(2800);
+
     await scrollToY(0, 800);
-    await setCaption("今天吃这桌 · 打开即用，30 秒搞定聚餐选店、点菜、团购比价与 AA 分账");
-    await recordHold(2000);
-  } finally {
+    await setCaption("今天吃这桌 · 30 秒搞定聚餐选店、点菜、团购比价与约饭定店");
+    await recordHold(1800);
+
+    // 结束视频流后再切手机竖屏（390x844）做零横向滚动条真机校验与截图
     ffmpeg.stdin.end();
     await new Promise((resolve) => ffmpeg.on("close", resolve));
+
+    await setCaption("");
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    await sleep(400);
+    await cdp.eval(`window.scrollTo(0, document.getElementById("resultsSection").offsetTop - 12)`);
+    await sleep(300);
+    const overflowInfo = await cdp.eval(`({
+      scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth,
+      mobileVisible: getComputedStyle(document.getElementById("compareMobileList")).display
+    })`);
+    await savePng("screen_mobile.png");
+    console.log("MOBILE_CHECK:", JSON.stringify(overflowInfo));
+    if (overflowInfo.scrollW > overflowInfo.clientW + 1) {
+      throw new Error(`手机端仍有横向溢出：scrollWidth=${overflowInfo.scrollW} > clientWidth=${overflowInfo.clientW}`);
+    }
+  } finally {
+    try { ffmpeg.stdin.end(); } catch {}
     cdp?.close();
     chrome.kill("SIGKILL");
     server.close();

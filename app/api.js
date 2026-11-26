@@ -1,21 +1,28 @@
 /**
- * 「今天吃这桌」后端通信层（对接 Cloudflare Worker 双路由安全代理）
- * - /poi  : 高德开放平台实时餐饮 POI 查询
- * - /chat : SCNet GLM-5.3-Flash 真实大模型推理
+ * 「今天吃这桌」后端通信层
+ * - 同域部署（腾讯云 EdgeOne Pages / 魔搭创空间 / 自托管国内服务）自动直连 /api/poi 与 /api/chat（国内 4G/5G/支付宝扫码秒开，零跨域）
+ * - 纯静态托管（如 GitHub Pages 或本地 http.server）自动回退到云端代理
  */
 
 import { extractJsonPayload, buildFallbackPlan, estimateMealBudget } from "./engine.js";
 
-export const WORKER_BASE = "https://alipay-dining-proxy.breakneo.workers.dev";
+const FALLBACK_WORKER = "https://alipay-dining-proxy.breakneo.workers.dev";
 
-export async function checkServiceHealth() {
-  const resp = await fetch(`${WORKER_BASE}/health`);
-  if (!resp.ok) throw new Error(`服务体检失败（HTTP ${resp.status}）`);
-  return resp.json();
+function getEndpoints() {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname || "";
+    const port = window.location.port || "";
+    const isStaticFallback = host.endsWith("github.io") || ((host === "127.0.0.1" || host === "localhost") && (port === "8080" || port === "4173"));
+    if (!isStaticFallback) {
+      return { poi: "/api/poi", chat: "/api/chat" };
+    }
+  }
+  return { poi: `${FALLBACK_WORKER}/poi`, chat: `${FALLBACK_WORKER}/chat` };
 }
 
 export async function fetchRealRestaurants({ location, city = "", cuisine = "", radius = 2000 }) {
-  const resp = await fetch(`${WORKER_BASE}/poi`, {
+  const { poi } = getEndpoints();
+  const resp = await fetch(poi, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ location, city, cuisine, radius }),
@@ -28,7 +35,8 @@ export async function fetchRealRestaurants({ location, city = "", cuisine = "", 
 }
 
 async function callChat(messages, maxTokens = 1600) {
-  const resp = await fetch(`${WORKER_BASE}/chat`, {
+  const { chat } = getEndpoints();
+  const resp = await fetch(chat, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -39,20 +47,17 @@ async function callChat(messages, maxTokens = 1600) {
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    throw new Error(data.error || `大模型推理失败（HTTP ${resp.status}）`);
+    throw new Error(data.error || `智能配菜服务繁忙（HTTP ${resp.status}）`);
   }
   const content = data?.choices?.[0]?.message?.content || "";
   if (!content.trim()) {
-    throw new Error("大模型返回内容为空，请重试");
+    throw new Error("未能获取配菜建议，请稍后重试");
   }
   return content;
 }
 
-/**
- * 为筛选出的 1~3 家真实饭馆批量生成：推荐理由 + 按人数/忌口点菜清单 + 团购策略 + 预算拆解
- */
-export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
-  const shopBrief = restaurants.map((r, i) => ({
+async function generateBatchPlans({ anchor, batchRestaurants, req, quota }) {
+  const shopBrief = batchRestaurants.map((r, i) => ({
     idx: i,
     id: r.id,
     name: r.name,
@@ -65,18 +70,18 @@ export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
   }));
 
   const systemPrompt = [
-    "你是「今天吃这桌」聚餐选店点菜专家（面向支付宝生活消费场景）。",
-    "严格遵守以下事实底线：",
+    "你是「今天吃这桌」聚餐选店点菜专家（支付宝生活消费场景）。",
+    "严格遵守以下底线：",
     "1. 只围绕传入的真实高德餐厅列表作答，绝不改名或编造不存在的店。",
-    "2. 严禁虚构某店具体的实时团购套餐精确标价（例如严禁凭空编造“该店现有298元4人餐”）；在 groupBuyStrategy 中，只给出该菜系/人均下「该优先搜代金券还是多人套餐、怎么叠加单点最省」的实操策略，并引导用卡片上的实时查团购与比价工具核算。",
-    "3. 每道菜的 estPrice 必须诚实参考该店 realAvgCostPerPerson（高德人均）与聚餐人数做合理估算，所有菜品 estPrice 之和应接近该店 estimatedTotal（允许 ±15%）。",
+    "2. 严禁虚构某店具体的实时团购套餐精确标价；在 groupBuyStrategy 中，仅结合支付宝口碑/高德团购生态，给出该品类下「先看代金券还是多人套餐、怎么叠加单点更划算」的实操建议（绝不提及任何非支付宝生态的第三方团购平台）。",
+    "3. 每道菜的 estPrice 必须诚实参考该店 realAvgCostPerPerson 与聚餐人数做合理估算，菜品之和应接近该店 estimatedTotal。",
     "4. 必须严格避开用户忌口，菜品数量严格遵循建议配比，杜绝浪费。",
     "5. 只输出合法 JSON，不要输出任何额外说明文字。",
   ].join("\n");
 
   const userPrompt = JSON.stringify(
     {
-      task: "请为以下真实餐厅分别生成详细的选店理由、按人数配菜清单、参考预算与团购省钱策略",
+      task: "请为以下真实餐厅分别生成选店理由、按人数配菜清单、参考预算与支付宝口碑/高德团购省钱建议",
       userNeed: {
         location: anchor?.name || req.location,
         city: anchor?.city || "",
@@ -89,12 +94,12 @@ export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
       },
       restaurants: shopBrief,
       outputSchema: {
-        overallAdvice: "一句话横向总结这3家店怎么选（例如偏稳妥选A、重氛围选B、高性价比选C）",
+        overallAdvice: "一句话横向总结这批店怎么选",
         plans: [
           {
             idx: 0,
-            highlightTag: "4-8字卖点标签，如：稳妥不踩雷/包间聚餐首选/性价比最高",
-            whyChoose: "结合评分、距离、人均与聚餐场景的2句推荐理由",
+            highlightTag: "4-8字卖点标签，如：稳妥不踩雷/聚餐氛围佳/高性价比",
+            whyChoose: "结合口碑、距离、人均与聚餐场景的2句推荐理由",
             dishes: [
               {
                 category: "凉菜/硬菜/素菜/汤主食",
@@ -104,7 +109,7 @@ export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
               },
             ],
             estimatedTotal: 480,
-            groupBuyStrategy: "具体可执行的团购/代金券核销策略（绝不编造虚假实时套餐价格）",
+            groupBuyStrategy: "结合支付宝/口碑/高德团购的省钱策略（不编造假价、不提竞品平台）",
             avoidTip: "一句针对人数/忌口/点菜顺序的避坑提醒",
           },
         ],
@@ -124,10 +129,10 @@ export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
     );
     const parsed = extractJsonPayload(raw);
     if (!parsed || !Array.isArray(parsed.plans)) {
-      throw new Error("模型返回格式未解析成功");
+      throw new Error("解析失败");
     }
 
-    const plans = restaurants.map((r, idx) => {
+    const plans = batchRestaurants.map((r, idx) => {
       const matched = parsed.plans.find((p) => Number(p.idx) === idx) || parsed.plans[idx];
       if (!matched || !Array.isArray(matched.dishes) || matched.dishes.length === 0) {
         return buildFallbackPlan(r, req, quota);
@@ -148,7 +153,7 @@ export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
       return {
         restaurantId: r.id,
         restaurantName: r.name,
-        highlightTag: String(matched.highlightTag || r.matchReasons?.[0] || "真实口碑优选"),
+        highlightTag: String(matched.highlightTag || r.matchReasons?.[0] || "口碑优选"),
         whyChoose: String(matched.whyChoose || ""),
         dishes,
         estimatedTotal,
@@ -159,29 +164,44 @@ export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
       };
     });
 
+    return { overallAdvice: String(parsed.overallAdvice || ""), plans };
+  } catch {
     return {
-      overallAdvice: String(parsed.overallAdvice || "已从周边真实高德餐厅中精选 3 家不同风味备选，按上方横评可直接拍板。"),
-      plans,
-      poweredBy: "GLM-5.3-Flash + 高德实时数据",
-    };
-  } catch (err) {
-    return {
-      overallAdvice: "高德真实餐厅数据已加载（大模型响应波动，当前展示本地兜底配菜结构，可点击刷新重试 AI 精配）。",
-      plans: restaurants.map((r) => buildFallbackPlan(r, req, quota)),
-      poweredBy: "高德实时数据（AI 兜底）",
-      warning: err?.message || "",
+      overallAdvice: "",
+      plans: batchRestaurants.map((r) => buildFallbackPlan(r, req, quota)),
     };
   }
 }
 
 /**
- * 粘贴真实团购套餐/代金券/菜单文字，实算「团购+补菜 vs 纯单点」差价与份量
+ * 支持 1~10 家餐厅批量生成配菜方案（超过 3 家自动并发分批，每批 3 家，避免截断）
+ */
+export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
+  const chunks = [];
+  for (let i = 0; i < restaurants.length; i += 3) {
+    chunks.push(restaurants.slice(i, i + 3));
+  }
+
+  const batchResults = await Promise.all(
+    chunks.map((batchRestaurants) => generateBatchPlans({ anchor, batchRestaurants, req, quota }))
+  );
+
+  const plans = batchResults.flatMap((b) => b.plans);
+  const firstAdvice = batchResults[0]?.overallAdvice?.trim();
+  const overallAdvice =
+    firstAdvice || `已为你从指定地点周边筛出 ${restaurants.length} 家贴合预算与口味的饭馆，可按下方对比直接挑选。`;
+
+  return { overallAdvice, plans };
+}
+
+/**
+ * 粘贴支付宝/口碑/高德团购套餐或代金券文字，实算「团购+补菜 vs 纯单点」差价与份量
  */
 export async function compareGroupBuyWithAI({ restaurant, req, estimatedTotal, pastedText }) {
   const systemPrompt = [
-    "你是「今天吃这桌」团购比价精算助手。",
-    "用户会把他在支付宝/口碑/美团/大众点评看到的真实团购套餐或代金券文案粘贴给你。",
-    "你必须严格基于用户粘贴的真实文字和金额做计算，绝不编造文字里没有的优惠。",
+    "你是「今天吃这桌」团购比价精算助手（支付宝口碑与高德生态）。",
+    "用户会把在支付宝、口碑或高德里看到的真实团购套餐或代金券文案粘贴给你。",
+    "你必须严格基于用户粘贴的真实文字和金额做计算，绝不编造文字里没有的优惠，仅围绕支付宝、口碑与高德生态作答。",
     "只返回合法 JSON。",
   ].join("\n");
 

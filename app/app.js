@@ -1,7 +1,10 @@
 import {
   normalizeBudget,
+  normalizeShopCount,
+  normalizeRadius,
+  formatDistance,
   computeDishQuota,
-  selectTopThreeRestaurants,
+  selectTopRestaurants,
   estimateMealBudget,
   calculateAaSplit,
   buildAbaoPrompt,
@@ -10,11 +13,17 @@ import {
   buildIcsCalendar,
 } from "./engine.js";
 import {
-  checkServiceHealth,
   fetchRealRestaurants,
   generateDiningPlans,
   compareGroupBuyWithAI,
 } from "./api.js";
+
+const PRESETS = {
+  hz: { loc: "杭州黄龙万科中心", radius: "2000", count: "3", people: "4", mode: "per_capita", budget: "120", scene: "朋友小聚", pref: "不吃辣" },
+  bj: { loc: "北京国贸", radius: "2000", count: "3", people: "8", mode: "total", budget: "1400", scene: "单位聚餐", pref: "清淡少油、要包间" },
+  sh: { loc: "上海陆家嘴", radius: "2000", count: "3", people: "6", mode: "per_capita", budget: "200", scene: "商务宴请", pref: "江浙菜、不吃辣" },
+  cd: { loc: "成都太古里", radius: "1000", count: "3", people: "5", mode: "per_capita", budget: "100", scene: "朋友小聚", pref: "想吃火锅" },
+};
 
 const state = {
   budgetMode: "per_capita",
@@ -25,14 +34,15 @@ const state = {
   backups: [],
   plans: [],
   overallAdvice: "",
-  poweredBy: "",
   selectedIdx: -1,
 };
 
 const els = {
-  serviceStatus: document.getElementById("serviceStatus"),
+  presetSelect: document.getElementById("presetSelect"),
   form: document.getElementById("diningForm"),
   locationInput: document.getElementById("locationInput"),
+  radiusSelect: document.getElementById("radiusSelect"),
+  countSelect: document.getElementById("countSelect"),
   headcountInput: document.getElementById("headcountInput"),
   budgetLabel: document.getElementById("budgetLabel"),
   budgetInput: document.getElementById("budgetInput"),
@@ -49,6 +59,7 @@ const els = {
   overallAdvice: document.getElementById("overallAdvice"),
   planMetaPills: document.getElementById("planMetaPills"),
   compareTbody: document.getElementById("compareTbody"),
+  compareMobileList: document.getElementById("compareMobileList"),
   cardsGrid: document.getElementById("cardsGrid"),
   decisionPanel: document.getElementById("decisionPanel"),
   decisionTitle: document.getElementById("decisionTitle"),
@@ -103,12 +114,24 @@ function updateQuotaPreview() {
     budgetMode: state.budgetMode,
     budgetValue: els.budgetInput.value,
   });
+  const count = normalizeShopCount(els.countSelect.value);
   const q = computeDishQuota(b.headcount, els.sceneSelect.value);
-  els.quotaPreview.innerHTML = `配菜标准：<strong>${b.headcount}人 · ${escapeHtml(q.scene)}</strong>，建议 <strong>${escapeHtml(q.formulaText)}</strong>（目标总预算约 ¥${b.totalBudget}，折合人均 ¥${b.perCapita}）`;
+  els.quotaPreview.innerHTML = `配菜标准：<strong>${b.headcount}人 · ${escapeHtml(q.scene)}</strong>，建议 <strong>${escapeHtml(q.formulaText)}</strong>（目标总预算约 ¥${b.totalBudget}，人均 ¥${b.perCapita}）`;
+  els.submitBtn.textContent = `帮我挑 ${count} 家并配菜`;
 }
 
-function setBudgetMode(mode) {
-  if (state.budgetMode === mode) return;
+function syncTagChips() {
+  const cur = els.prefInput.value
+    .split(/[，,、\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  document.querySelectorAll(".tag-chip").forEach((chip) => {
+    chip.classList.toggle("active", cur.includes(chip.dataset.tag));
+  });
+}
+
+function setBudgetMode(mode, preserveVal = false) {
+  if (state.budgetMode === mode && !preserveVal) return;
   const n = Math.max(Number(els.headcountInput.value) || 4, 1);
   const cur = Number(els.budgetInput.value) || 120;
   state.budgetMode = mode;
@@ -117,10 +140,10 @@ function setBudgetMode(mode) {
   });
   if (mode === "total") {
     els.budgetLabel.textContent = "本桌总预算";
-    els.budgetInput.value = String(Math.round(cur * n));
+    if (!preserveVal) els.budgetInput.value = String(Math.round(cur * n));
   } else {
     els.budgetLabel.textContent = "人均预算";
-    els.budgetInput.value = String(Math.max(Math.round(cur / n), 30));
+    if (!preserveVal) els.budgetInput.value = String(Math.max(Math.round(cur / n), 30));
   }
   updateQuotaPreview();
 }
@@ -166,16 +189,17 @@ function renderResults() {
   els.resultsSection.classList.remove("hidden");
 
   const anchorLabel = [state.anchor?.city, state.anchor?.district, state.anchor?.name].filter(Boolean).join(" · ");
-  els.anchorMeta.textContent = `高德实时定位：${anchorLabel || state.req.location}`;
+  const rangeLabel = formatDistance(state.req.radius);
+  els.anchorMeta.textContent = `${anchorLabel || state.req.location} · ${rangeLabel}内`;
   els.overallAdvice.textContent = state.overallAdvice;
   els.planMetaPills.innerHTML = [
+    `<span class="meta-pill">精选 ${state.picked.length} 家</span>`,
     `<span class="meta-pill">${state.req.headcount}人 · ${escapeHtml(state.req.scene)}</span>`,
     `<span class="meta-pill">目标预算 ¥${state.req.totalBudget}（人均¥${state.req.perCapita}）</span>`,
-    `<span class="meta-pill">配比：${escapeHtml(state.quota.formulaText)}</span>`,
-    `<span class="meta-pill">${escapeHtml(state.poweredBy)}</span>`,
+    `<span class="meta-pill">${escapeHtml(state.quota.formulaText)}</span>`,
   ].join("");
 
-  // 渲染横向 3 家对比表
+  // 1. 桌面端横向对比表
   els.compareTbody.innerHTML = state.picked
     .map((shop, idx) => {
       const plan = state.plans[idx];
@@ -183,8 +207,8 @@ function renderResults() {
       const estPer = Math.round(estTotal / state.req.headcount);
       return `
         <tr>
-          <td><strong>${idx + 1}. ${escapeHtml(shop.name)}</strong><br><span style="color:#8a8278;font-size:12px;">${escapeHtml(shop.cuisine)}</span></td>
-          <td>${shop.rating ? `⭐ ${shop.rating.toFixed(1)}` : "暂无评分"} / ${shop.distance != null ? `${Math.round(shop.distance)}m` : "附近"}</td>
+          <td><strong>${idx + 1}. ${escapeHtml(shop.name)}</strong><br><span style="color:#8c8378;font-size:12px;">${escapeHtml(shop.cuisine)}</span></td>
+          <td>${shop.rating ? `⭐ ${shop.rating.toFixed(1)}` : "暂无评分"} / ${formatDistance(shop.distance)}</td>
           <td>${shop.cost ? `¥${Math.round(shop.cost)}/人` : "门店未标"}</td>
           <td><strong>¥${estTotal}</strong>（人均¥${estPer}）</td>
           <td>${renderBudgetBadge(estTotal, state.req.totalBudget)}</td>
@@ -194,7 +218,34 @@ function renderResults() {
     })
     .join("");
 
-  // 渲染 3 张餐厅决策卡
+  // 2. 手机端零横向滚条对比卡
+  els.compareMobileList.innerHTML = state.picked
+    .map((shop, idx) => {
+      const plan = state.plans[idx];
+      const estTotal = plan?.estimatedTotal || estimateMealBudget({ restaurantCost: shop.cost, headcount: state.req.headcount, targetPerCapita: state.req.perCapita }).estimatedTotal;
+      const estPer = Math.round(estTotal / state.req.headcount);
+      return `
+        <div class="compare-m-item">
+          <div class="compare-m-top">
+            <div>
+              <div class="compare-m-name">${idx + 1}. ${escapeHtml(shop.name)}</div>
+              <div class="compare-m-sub">${escapeHtml(shop.cuisine)} · ${shop.rating ? `⭐ ${shop.rating.toFixed(1)}` : "暂无评分"} · 距 ${formatDistance(shop.distance)}</div>
+            </div>
+            ${renderBudgetBadge(estTotal, state.req.totalBudget)}
+          </div>
+          <div class="compare-m-bottom">
+            <span>参考人均 ${shop.cost ? `¥${Math.round(shop.cost)}` : "未标"} · 本桌约 <strong>¥${estTotal}</strong>（¥${estPer}/人）</span>
+            <button type="button" class="btn-outline btn-sm" data-scroll-card="${idx}">看菜单</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  // 3. 卡片列数适配（1家居中、2家双列、3家及以上三列）
+  els.cardsGrid.className = "cards-grid" + (state.picked.length === 1 ? " cols-1" : state.picked.length === 2 ? " cols-2" : "");
+
+  // 4. 餐厅决策方案卡
   els.cardsGrid.innerHTML = state.picked
     .map((shop, idx) => {
       const plan = state.plans[idx];
@@ -224,7 +275,7 @@ function renderResults() {
               <span class="rank-tag">方案 ${idx + 1}</span>
               <span class="badge badge-accent">${escapeHtml(plan?.highlightTag || "口碑精选")}</span>
             </div>
-            ${state.backups.length > 0 ? `<button type="button" class="btn-ghost btn-sm" data-swap-idx="${idx}" title="从高德真实候选池换一家">换一家</button>` : ""}
+            ${state.backups.length > 0 ? `<button type="button" class="btn-ghost btn-sm" data-swap-idx="${idx}" title="从附近候补餐厅中换一家">换一家</button>` : ""}
           </div>
 
           <div>
@@ -232,8 +283,8 @@ function renderResults() {
             <div class="shop-facts">
               <span>${escapeHtml(shop.cuisine)}</span>
               <span>⭐ <strong>${shop.rating ? shop.rating.toFixed(1) : "暂无"}</strong></span>
-              <span>高德人均 <strong>${shop.cost ? `¥${Math.round(shop.cost)}` : "参考预算"}</strong></span>
-              <span>距地标 ${shop.distance != null ? `${Math.round(shop.distance)}m` : "附近"}</span>
+              <span>参考人均 <strong>${shop.cost ? `¥${Math.round(shop.cost)}` : "按预算"}</strong></span>
+              <span>距选定地点 ${formatDistance(shop.distance)}</span>
             </div>
             <p class="shop-address">地址：${escapeHtml(shop.address)}${shop.openTime ? ` · 营业 ${escapeHtml(shop.openTime)}` : ""}</p>
           </div>
@@ -243,21 +294,21 @@ function renderResults() {
           <div>
             <div class="block-title">
               <span>按 ${state.req.headcount} 人配好这一桌</span>
-              <span style="font-size:11px;font-weight:400;color:#8a8278;">估价基于真实人均</span>
+              <span style="font-size:11px;font-weight:400;color:#8c8378;">估价供参考</span>
             </div>
             <ul class="dish-list">${dishRows}</ul>
           </div>
 
           <div class="budget-strip">
             <div>
-              <div style="font-size:12px;color:#8a8278;">本桌参考总价 / 折合人均</div>
-              <strong>约 ¥${estTotal}</strong> <span style="color:#5c564f;">（¥${estPer}/人）</span>
+              <div style="font-size:12px;color:#8c8378;">本桌参考总价 / 折合人均</div>
+              <strong>约 ¥${estTotal}</strong> <span style="color:#5c544c;">（¥${estPer}/人）</span>
             </div>
             ${renderBudgetBadge(estTotal, state.req.totalBudget)}
           </div>
 
           <div class="strategy-box">
-            <strong>支付宝 / 团购省钱建议</strong>
+            <strong>支付宝 / 口碑团购省钱建议</strong>
             <p>${escapeHtml(plan?.groupBuyStrategy || "")}</p>
           </div>
 
@@ -267,20 +318,20 @@ function renderResults() {
             <button type="button" class="btn-alipay btn-sm" data-abao-idx="${idx}">复制问阿宝查团购</button>
             <a class="btn-outline btn-sm" href="${amapUrl}" target="_blank" rel="noopener noreferrer">高德地图直达</a>
             <button type="button" class="btn-outline btn-sm full-span" data-toggle-gb="${idx}">
-              粘贴支付宝/点评团购文案，帮我算差价
+              粘贴支付宝/口碑团购文案，帮我算差价
             </button>
             <button type="button" class="btn-primary btn-sm full-span" data-pick-idx="${idx}">
-              就定这家 · 生成约饭通知与 AA 分账
+              就定这家 · 生成约饭通知
             </button>
           </div>
 
           <div class="gb-drawer hidden" id="gb-drawer-${idx}">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span style="font-size:12px;font-weight:600;color:#5c564f;">贴入你看到的真实团购套餐或代金券文字</span>
-              <button type="button" class="btn-ghost btn-sm" data-fill-sample-gb="${idx}" style="font-size:11.5px;padding:3px 7px;">填入示例文案</button>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+              <span style="font-size:12px;font-weight:600;color:#5c544c;">贴入支付宝、口碑或高德看到的团购/代金券文案</span>
+              <button type="button" class="btn-ghost btn-sm" data-fill-sample-gb="${idx}" style="font-size:11.5px;padding:3px 7px;white-space:nowrap;">填入示例</button>
             </div>
-            <textarea id="gb-input-${idx}" rows="3" placeholder="例如：288元4人餐，含招牌主菜2份+凉菜1份+时蔬1份+主食，周末通用，可叠加79代100代金券"></textarea>
-            <button type="button" class="btn-primary btn-sm" data-run-gb="${idx}">AI 实算团购 vs 单点</button>
+            <textarea id="gb-input-${idx}" rows="3" placeholder="例如：288元4人餐，含招牌主菜2份+凉菜1份+时蔬1份+主食，周末通用，可叠加口碑79代100代金券"></textarea>
+            <button type="button" class="btn-primary btn-sm" data-run-gb="${idx}">智能实算团购 vs 单点</button>
             <div class="gb-result hidden" id="gb-result-${idx}"></div>
           </div>
         </article>
@@ -301,8 +352,6 @@ function openDecisionPanel(idx) {
     restaurant: shop,
     headcount: state.req.headcount,
     scene: state.req.scene,
-    dishes: plan.dishes.map((d) => d.name),
-    estimatedTotal: plan.estimatedTotal,
   });
   els.decisionAmapLink.href = buildAmapUrl(shop);
   els.aaTotalInput.value = String(plan.estimatedTotal);
@@ -327,7 +376,7 @@ function refreshAaBox() {
 
 async function handleSwapShop(idx) {
   if (!state.backups.length) {
-    showToast("周边没有更多候补饭馆了");
+    showToast("该范围内没有更多候补饭馆了，可适当扩大搜索范围");
     return;
   }
   const replacement = state.backups.shift();
@@ -354,7 +403,7 @@ async function handleRunGroupBuy(idx, btn) {
   const out = document.getElementById(`gb-result-${idx}`);
   const pasted = (input?.value || "").trim();
   if (pasted.length < 6) {
-    showToast("请先粘贴团购套餐或代金券文案");
+    showToast("请先粘贴支付宝/口碑团购套餐或代金券文案");
     return;
   }
   btn.disabled = true;
@@ -387,7 +436,7 @@ async function handleRunGroupBuy(idx, btn) {
     showToast(err?.message || "团购比价失败，请稍后重试");
   } finally {
     btn.disabled = false;
-    btn.textContent = "AI 实算团购 vs 单点";
+    btn.textContent = "智能实算团购 vs 单点";
   }
 }
 
@@ -404,10 +453,12 @@ async function handleSearchSubmit(evt) {
     budgetMode: state.budgetMode,
     budgetValue: els.budgetInput.value,
   });
+  const count = normalizeShopCount(els.countSelect.value);
+  const radius = normalizeRadius(els.radiusSelect.value);
   const scene = els.sceneSelect.value;
   const preferences = els.prefInput.value.trim();
   const quota = computeDishQuota(budget.headcount, scene);
-  const req = { location, ...budget, scene, preferences };
+  const req = { location, ...budget, count, radius, scene, preferences };
 
   state.req = req;
   state.quota = quota;
@@ -415,25 +466,25 @@ async function handleSearchSubmit(evt) {
   els.decisionPanel.classList.add("hidden");
 
   try {
-    setLoading(true, `正在高德地图检索「${location}」周边真实营业餐厅…`, "实时拉取评分、人均消费、距离与营业时间");
+    setLoading(true, `正在检索「${location}」${formatDistance(radius)}内合适饭馆…`, "按口碑、距离与预算综合筛选");
     const poiData = await fetchRealRestaurants({
       location,
       cuisine: extractCuisineKeyword(preferences),
-      radius: 2000,
+      radius,
     });
     if (!poiData.restaurants || poiData.restaurants.length === 0) {
-      throw new Error(`「${location}」附近暂未检索到营业餐厅，请换个更具体的商圈或地铁站名`);
+      throw new Error(`「${location}」${formatDistance(radius)}内暂未找到合适餐厅，建议扩大搜索范围或换个附近商圈名`);
     }
 
-    const { picked, backups } = selectTopThreeRestaurants(poiData.restaurants, req);
+    const { picked, backups } = selectTopRestaurants(poiData.restaurants, req, count);
     state.anchor = poiData.anchor;
     state.picked = picked;
     state.backups = backups;
 
     setLoading(
       true,
-      `已锁定 ${picked.length} 家真实高分饭馆，AI 正在按 ${req.headcount} 人配菜算账…`,
-      picked.map((p) => p.name).join(" · ")
+      `已选出 ${picked.length} 家候选饭馆，正在按 ${req.headcount} 人配菜算账…`,
+      picked.slice(0, 4).map((p) => p.name).join(" · ") + (picked.length > 4 ? ` 等 ${picked.length} 家` : "")
     );
 
     const aiRes = await generateDiningPlans({
@@ -444,7 +495,6 @@ async function handleSearchSubmit(evt) {
     });
     state.plans = aiRes.plans;
     state.overallAdvice = aiRes.overallAdvice;
-    state.poweredBy = aiRes.poweredBy;
 
     setLoading(false);
     renderResults();
@@ -455,26 +505,32 @@ async function handleSearchSubmit(evt) {
   }
 }
 
+function handleScrollToCard(e) {
+  const btn = e.target.closest("[data-scroll-card]");
+  if (!btn) return;
+  const card = document.getElementById(`shop-card-${btn.dataset.scrollCard}`);
+  card?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
 function initEvents() {
-  document.querySelectorAll(".seg-btn").forEach((btn) => {
-    btn.addEventListener("click", () => setBudgetMode(btn.dataset.budgetMode));
+  els.presetSelect.addEventListener("change", () => {
+    const p = PRESETS[els.presetSelect.value];
+    if (!p) return;
+    els.locationInput.value = p.loc;
+    els.radiusSelect.value = p.radius;
+    els.countSelect.value = p.count;
+    els.headcountInput.value = p.people;
+    setBudgetMode(p.mode, true);
+    els.budgetInput.value = p.budget;
+    els.sceneSelect.value = p.scene;
+    els.prefInput.value = p.pref;
+    syncTagChips();
+    updateQuotaPreview();
+    showToast("已填入常见聚餐场景，点击下方按钮即可开始挑店");
   });
 
-  document.querySelectorAll(".preset-chip").forEach((chip) => {
-    chip.addEventListener("click", () => {
-      els.locationInput.value = chip.dataset.loc;
-      els.headcountInput.value = chip.dataset.people;
-      state.budgetMode = chip.dataset.mode;
-      document.querySelectorAll(".seg-btn").forEach((b) => {
-        b.classList.toggle("active", b.dataset.budgetMode === state.budgetMode);
-      });
-      els.budgetLabel.textContent = state.budgetMode === "total" ? "本桌总预算" : "人均预算";
-      els.budgetInput.value = chip.dataset.budget;
-      els.sceneSelect.value = chip.dataset.scene;
-      els.prefInput.value = chip.dataset.pref;
-      updateQuotaPreview();
-      showToast("已填入真实地标参数，点击右侧按钮开始挑店");
-    });
+  document.querySelectorAll(".seg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setBudgetMode(btn.dataset.budgetMode));
   });
 
   document.querySelectorAll(".tag-chip").forEach((chip) => {
@@ -491,26 +547,24 @@ function initEvents() {
     });
   });
 
-  [els.headcountInput, els.budgetInput, els.sceneSelect].forEach((el) => {
+  els.prefInput.addEventListener("input", syncTagChips);
+
+  [els.headcountInput, els.budgetInput, els.sceneSelect, els.countSelect, els.radiusSelect].forEach((el) => {
     el.addEventListener("input", updateQuotaPreview);
     el.addEventListener("change", updateQuotaPreview);
   });
 
   els.form.addEventListener("submit", handleSearchSubmit);
 
-  els.compareTbody.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-scroll-card]");
-    if (!btn) return;
-    const card = document.getElementById(`shop-card-${btn.dataset.scrollCard}`);
-    card?.scrollIntoView({ behavior: "smooth", block: "center" });
-  });
+  els.compareTbody.addEventListener("click", handleScrollToCard);
+  els.compareMobileList.addEventListener("click", handleScrollToCard);
 
   els.cardsGrid.addEventListener("click", (e) => {
     const abaoBtn = e.target.closest("[data-abao-idx]");
     if (abaoBtn) {
       const idx = Number(abaoBtn.dataset.abaoIdx);
       const prompt = buildAbaoPrompt(state.picked[idx], state.req.headcount, state.req.perCapita);
-      copyText(prompt, "已复制问阿宝指令，打开支付宝阿宝粘贴即可查该店实时团购");
+      copyText(prompt, "已复制查团购指令，打开支付宝阿宝粘贴即可查该店实时团购");
       return;
     }
 
@@ -534,7 +588,7 @@ function initEvents() {
       const pkgPrice = Math.round((est * 0.72) / 10) * 10;
       const input = document.getElementById(`gb-input-${idx}`);
       if (input) {
-        input.value = `【示例团购】${pkgPrice}元${state.req.headcount}人欢聚餐：含门店热销主菜2道 + 爽口凉菜1道 + 清炒时蔬1道 + 米饭/例汤；周末晚市可用，另支持79代100代金券限用1张。`;
+        input.value = `【示例口碑团购】${pkgPrice}元${state.req.headcount}人欢聚餐：含门店热销主菜2道 + 爽口凉菜1道 + 清炒时蔬1道 + 米饭/例汤；周末晚市可用，另支持支付宝口碑79代100代金券限用1张。`;
       }
       return;
     }
@@ -552,7 +606,7 @@ function initEvents() {
   });
 
   els.closeDecisionBtn.addEventListener("click", () => els.decisionPanel.classList.add("hidden"));
-  els.copyInviteBtn.addEventListener("click", () => copyText(els.inviteTextarea.value, "已复制约饭通知，可直接发微信/钉钉群"));
+  els.copyInviteBtn.addEventListener("click", () => copyText(els.inviteTextarea.value, "已复制约饭通知，可直接发群里"));
   els.downloadIcsBtn.addEventListener("click", () => {
     const shop = state.picked[state.selectedIdx];
     if (!shop) return;
@@ -570,24 +624,8 @@ function initEvents() {
   [els.aaTotalInput, els.aaPeopleInput, els.aaDrinkInput, els.aaDrinkersInput].forEach((el) => {
     el.addEventListener("input", refreshAaBox);
   });
-  els.copyAaBtn.addEventListener("click", () => copyText(els.aaResultBox.textContent, "已复制支付宝群收款 AA 账单"));
-}
-
-async function initHealth() {
-  try {
-    const h = await checkServiceHealth();
-    if (h.ok && h.amapReady && h.llmReady) {
-      els.serviceStatus.classList.add("ready");
-      els.serviceStatus.innerHTML = `<span class="dot"></span><span>高德实时数据 + ${escapeHtml(h.model)} 已就绪</span>`;
-    } else {
-      throw new Error("服务未完全就绪");
-    }
-  } catch {
-    els.serviceStatus.classList.add("error");
-    els.serviceStatus.innerHTML = `<span class="dot"></span><span>云端通道连接异常</span>`;
-  }
+  els.copyAaBtn.addEventListener("click", () => copyText(els.aaResultBox.textContent, "已复制账单文案，可去支付宝发起群收款"));
 }
 
 updateQuotaPreview();
 initEvents();
-initHealth();

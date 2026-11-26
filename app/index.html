@@ -3,56 +3,77 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>今天吃这桌 · 聚餐选店配菜与团购精算</title>
+    <title>今天吃这桌 · 聚餐选店配菜与团购参谋</title>
+    <link rel="icon" type="image/png" href="./favicon.png" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="page-shell">
       <header class="topbar">
         <div class="brand-wrap">
-          <div class="brand-mark" aria-hidden="true">桌</div>
+          <img src="./logo.png" alt="今天吃这桌" class="brand-logo" width="48" height="48" />
           <div>
             <h1 class="brand-title">今天吃这桌</h1>
-            <p class="brand-sub">高德实时选 3 家真馆子 · 按人数配好一桌菜 · 团购比价与 AA 算账</p>
+            <p class="brand-sub">输入地点、人数与预算，为你挑好饭馆、配好一桌菜、算清团购与花销</p>
           </div>
-        </div>
-        <div class="status-pill" id="serviceStatus" title="实时检测高德与大模型连接状态">
-          <span class="dot"></span>
-          <span>实时连接检测中</span>
         </div>
       </header>
 
       <main>
         <!-- 输入表单卡 -->
         <section class="panel search-panel" aria-label="聚餐需求输入">
-          <div class="preset-bar">
-            <span class="preset-label">快捷试玩：</span>
-            <button type="button" class="preset-chip" data-loc="杭州黄龙万科中心" data-people="4" data-mode="per_capita" data-budget="120" data-scene="朋友小聚" data-pref="不吃辣">
-              杭州黄龙 · 4人 · 人均120
-            </button>
-            <button type="button" class="preset-chip" data-loc="北京国贸" data-people="8" data-mode="total" data-budget="1400" data-scene="单位聚餐" data-pref="清淡少油,要包间">
-              北京国贸 · 8人团建 · 总预算1400
-            </button>
-            <button type="button" class="preset-chip" data-loc="上海陆家嘴" data-people="6" data-mode="per_capita" data-budget="200" data-scene="商务宴请" data-pref="江浙菜,不吃辣">
-              上海陆家嘴 · 6人商务 · 人均200
-            </button>
-            <button type="button" class="preset-chip" data-loc="成都太古里" data-people="5" data-mode="per_capita" data-budget="100" data-scene="朋友小聚" data-pref="火锅">
-              成都太古里 · 5人 · 人均100
-            </button>
+          <div class="preset-row">
+            <label class="preset-select-wrap" for="presetSelect">
+              <span class="preset-label">快捷试玩</span>
+              <select id="presetSelect" class="preset-select">
+                <option value="">选择常见聚餐场景，一键填入体验…</option>
+                <option value="hz">杭州黄龙万科中心 · 4人朋友小聚 · 人均120 · 不吃辣</option>
+                <option value="bj">北京国贸 · 8人单位聚餐 · 总预算1400 · 清淡少油</option>
+                <option value="sh">上海陆家嘴 · 6人商务宴请 · 人均200 · 江浙菜</option>
+                <option value="cd">成都太古里 · 5人朋友小聚 · 人均100 · 火锅</option>
+              </select>
+            </label>
           </div>
 
           <form id="diningForm" class="dining-form">
             <div class="form-grid">
               <label class="field field-wide">
-                <span class="field-label">聚餐地点（全国任意商圈 / 写字楼 / 地铁站）</span>
+                <span class="field-label">聚餐地点（商圈 / 写字楼 / 地铁站）</span>
                 <input
                   id="locationInput"
                   type="text"
                   required
                   maxlength="50"
-                  placeholder="例如：杭州黄龙万科中心、北京国贸、深圳南山海岸城"
+                  placeholder="例如：杭州黄龙万科中心、北京国贸、深圳海岸城"
                   value="杭州黄龙万科中心"
                 />
+              </label>
+
+              <label class="field">
+                <span class="field-label">搜索范围</span>
+                <select id="radiusSelect">
+                  <option value="500">500米内（步行约6分钟）</option>
+                  <option value="1000">1公里内</option>
+                  <option value="2000" selected>2公里内（推荐）</option>
+                  <option value="3000">3公里内</option>
+                  <option value="5000">5公里内</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span class="field-label">筛选几家餐厅</span>
+                <select id="countSelect">
+                  <option value="1">1 家</option>
+                  <option value="2">2 家</option>
+                  <option value="3" selected>3 家（推荐）</option>
+                  <option value="4">4 家</option>
+                  <option value="5">5 家</option>
+                  <option value="6">6 家</option>
+                  <option value="7">7 家</option>
+                  <option value="8">8 家</option>
+                  <option value="9">9 家</option>
+                  <option value="10">10 家</option>
+                </select>
               </label>
 
               <label class="field">
@@ -89,13 +110,13 @@
                 </select>
               </label>
 
-              <label class="field field-wide">
+              <label class="field field-full">
                 <span class="field-label">口味偏好与忌口（可选）</span>
                 <input
                   id="prefInput"
                   type="text"
                   maxlength="80"
-                  placeholder="如：不吃辣、想吃火锅或江浙菜、有同事控糖/不吃海鲜"
+                  placeholder="如：不吃辣、想吃火锅或江浙菜、不要海鲜、要包间"
                 />
               </label>
             </div>
@@ -113,9 +134,7 @@
             </div>
 
             <div class="form-footer">
-              <div class="quota-preview" id="quotaPreview">
-                当前配菜标准：<strong>4人 · 朋友小聚</strong>，建议 <strong>1道凉菜 + 2道招牌硬菜 + 1道时蔬 + 1道汤/主食</strong>（预算上限 ¥480）
-              </div>
+              <div class="quota-preview" id="quotaPreview"></div>
               <button type="submit" class="btn-primary" id="submitBtn">
                 帮我挑 3 家并配菜
               </button>
@@ -127,32 +146,33 @@
         <section id="loadingSection" class="panel loading-panel hidden" aria-live="polite">
           <div class="spinner" aria-hidden="true"></div>
           <div>
-            <strong id="loadingTitle">正在高德地图检索周边真实营业餐厅…</strong>
-            <p id="loadingSub">按口碑评分、真实人均与距离筛出 3 家，并由大模型按人数配菜算账</p>
+            <strong id="loadingTitle">正在检索附近合适饭馆…</strong>
+            <p id="loadingSub">按口碑、距离与预算综合筛选，并为你按人数配好菜单</p>
           </div>
         </section>
 
         <section id="errorSection" class="panel error-panel hidden" role="alert"></section>
 
         <!-- 决策结果区 -->
-        <section id="resultsSection" class="results-section hidden" aria-label="3家推荐饭馆与点菜方案">
-          <!-- 横向总览与对比表 -->
+        <section id="resultsSection" class="results-section hidden" aria-label="推荐饭馆与点菜方案">
+          <!-- 横向总览与响应式对比 -->
           <div class="panel summary-panel">
             <div class="summary-head">
               <div>
-                <div class="source-badge" id="anchorMeta">高德实时检索</div>
-                <h2 id="overallAdvice">已为你挑出 3 家最贴合本次聚餐的真实饭馆</h2>
+                <div class="source-badge" id="anchorMeta">定位区域</div>
+                <h2 id="overallAdvice">已为你挑出最贴合本次聚餐的饭馆</h2>
               </div>
               <div class="meta-pills" id="planMetaPills"></div>
             </div>
 
-            <div class="compare-table-wrap">
-              <table class="compare-table" id="compareTable">
+            <!-- 桌面端表格 -->
+            <div class="compare-desktop">
+              <table class="compare-table">
                 <thead>
                   <tr>
-                    <th>推荐餐厅（真实高德数据）</th>
-                    <th>评分 / 距离</th>
-                    <th>高德人均</th>
+                    <th>推荐餐厅</th>
+                    <th>口碑 / 距离</th>
+                    <th>参考人均</th>
                     <th>本桌配菜估价</th>
                     <th>预算评估</th>
                     <th>操作</th>
@@ -161,35 +181,38 @@
                 <tbody id="compareTbody"></tbody>
               </table>
             </div>
+
+            <!-- 手机端自适应紧凑卡片列表（零横向滚动条） -->
+            <div class="compare-mobile" id="compareMobileList"></div>
           </div>
 
-          <!-- 3 张精选餐厅方案卡 -->
+          <!-- 精选餐厅方案卡 -->
           <div id="cardsGrid" class="cards-grid"></div>
         </section>
 
-        <!-- 拍板定店 + AA 分账收尾面板 -->
-        <section id="decisionPanel" class="panel decision-panel hidden" aria-label="定店通知与支付宝群收款AA">
+        <!-- 拍板定店通知面板 -->
+        <section id="decisionPanel" class="panel decision-panel hidden" aria-label="聚餐定店通知">
           <div class="decision-head">
             <div>
-              <span class="kicker">已拍板 · 聚餐收尾工具箱</span>
+              <span class="kicker">已拍板 · 定店约饭通知</span>
               <h2 id="decisionTitle">就定这家</h2>
             </div>
             <button type="button" class="btn-ghost" id="closeDecisionBtn">收起</button>
           </div>
 
-          <div class="decision-grid">
-            <div class="subcard">
-              <h3>1. 一键发群约饭通知 & 手机日历提醒</h3>
-              <textarea id="inviteTextarea" rows="7" readonly></textarea>
-              <div class="btn-row">
-                <button type="button" class="btn-primary btn-sm" id="copyInviteBtn">复制约饭通知发群里</button>
-                <button type="button" class="btn-outline btn-sm" id="downloadIcsBtn">导出 .ics 日历提醒</button>
-                <a id="decisionAmapLink" class="btn-outline btn-sm" target="_blank" rel="noopener noreferrer">高德导航</a>
-              </div>
+          <div class="subcard">
+            <h3>一键发群约饭通知 & 手机日历提醒</h3>
+            <textarea id="inviteTextarea" rows="5" readonly></textarea>
+            <div class="btn-row">
+              <button type="button" class="btn-primary btn-sm" id="copyInviteBtn">复制约饭通知发群里</button>
+              <button type="button" class="btn-outline btn-sm" id="downloadIcsBtn">导出 .ics 日历提醒</button>
+              <a id="decisionAmapLink" class="btn-outline btn-sm" target="_blank" rel="noopener noreferrer">打开高德导航</a>
             </div>
+          </div>
 
-            <div class="subcard">
-              <h3>2. 饭后支付宝群收款 AA 精算器</h3>
+          <details class="aa-fold">
+            <summary>饭后需要算账？展开支付宝群收款 AA 计算器</summary>
+            <div class="aa-fold-body">
               <div class="aa-form">
                 <label>
                   <span>最终实付总额（元）</span>
@@ -210,19 +233,16 @@
               </div>
               <div class="aa-result" id="aaResultBox"></div>
               <div class="btn-row">
-                <button type="button" class="btn-alipay btn-sm" id="copyAaBtn">复制支付宝群收款账单</button>
+                <button type="button" class="btn-alipay btn-sm" id="copyAaBtn">复制账单文案</button>
+                <a id="openAlipayAaLink" class="btn-outline btn-sm" href="alipays://platformapi/startapp?appId=20000116">去支付宝发起群收款</a>
               </div>
             </div>
-          </div>
+          </details>
         </section>
       </main>
 
       <footer class="site-footer">
-        <p>
-          <strong>数据来源与合规说明：</strong>
-          餐厅名称、地址、评分、人均消费与距离均实时查询自<strong>高德开放平台 Web 服务 API</strong>；
-          点菜搭配、预算测算与团购比价由 <strong>GLM-5.3-Flash</strong> 大模型推理生成（单品价格为基于门店真实人均的参考估算，实际以门店当日菜单与支付宝/阿宝实时团购为准）。
-        </p>
+        <p>商户信息来源：高德地图 · 菜单单价与总价为结合门店人均的智能参考估算，实际以门店当日菜单及支付宝/口碑团购页为准。</p>
       </footer>
     </div>
 

@@ -42,7 +42,7 @@
           "restaurantName": { "type": "string" },
           "headcount": { "type": "integer" },
           "alaCarteEstimatedTotal": { "type": "number" },
-          "pastedText": { "type": "string", "description": "从支付宝/阿宝/点评复制的真实团购文字" }
+          "pastedText": { "type": "string", "description": "从支付宝/阿宝/口碑复制的真实团购文字" }
         }
       }
     },

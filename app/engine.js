@@ -37,6 +37,23 @@ export function normalizeBudget({ headcount = 4, budgetMode = "per_capita", budg
   return { headcount: n, budgetMode: "per_capita", perCapita, totalBudget: perCapita * n };
 }
 
+export function normalizeShopCount(count = 3) {
+  const n = Number(count);
+  if (!Number.isFinite(n)) return 3;
+  return Math.min(Math.max(Math.round(n), 1), 10);
+}
+
+export function normalizeRadius(radius = 2000) {
+  return Math.min(Math.max(Math.round(Number(radius) || 2000), 300), 5000);
+}
+
+export function formatDistance(meters) {
+  const m = Number(meters);
+  if (!Number.isFinite(m) || m < 0) return "附近";
+  if (m >= 1000) return `${(m / 1000).toFixed(1)}公里`;
+  return `${Math.round(m)}米`;
+}
+
 export function computeDishQuota(headcount = 4, scene = "朋友小聚") {
   const n = Math.min(Math.max(Math.round(Number(headcount) || 4), 1), 30);
   const formalBonus = scene === "商务宴请" || scene === "单位聚餐" ? 1 : 0;
@@ -109,17 +126,17 @@ function isFastFoodPoi(poi, prefText) {
   return FAST_FOOD_KEYWORDS.some((kw) => text.includes(kw) && !prefText.includes(kw));
 }
 
-function scoreRestaurant(poi, { headcount = 4, perCapita = 120, scene = "朋友小聚", preferences = "" }) {
+function scoreRestaurant(poi, { headcount = 4, perCapita = 120, scene = "朋友小聚", preferences = "", radius = 2000 }) {
   const pref = String(preferences || "");
   const fullText = `${poi.name || ""} ${poi.cuisine || ""} ${poi.rawType || ""} ${poi.tag || ""}`;
   let score = 0;
   const reasons = [];
 
-  // 1. 真实高德评分（最多 42 分）
+  // 1. 口碑评分（最多 42 分）
   const rating = Number(poi.rating);
   if (Number.isFinite(rating) && rating > 0) {
     score += Math.min(Math.max((rating - 3.0) / 2.0, 0), 1) * 42;
-    if (rating >= 4.5) reasons.push(`高德 ${rating.toFixed(1)} 高分`);
+    if (rating >= 4.5) reasons.push(`口碑 ${rating.toFixed(1)} 分`);
   } else {
     score += 22;
   }
@@ -148,17 +165,18 @@ function scoreRestaurant(poi, { headcount = 4, perCapita = 120, scene = "朋友�
 
   // 3. 距离便利度（最多 18 分）
   const dist = Number(poi.distance);
+  const maxR = normalizeRadius(radius);
   if (Number.isFinite(dist) && dist >= 0) {
-    if (dist <= 500) {
+    if (dist <= Math.min(500, maxR * 0.4)) {
       score += 18;
-      reasons.push(`步行约 ${Math.round(dist)} 米`);
-    } else if (dist <= 1200) {
-      score += 14;
-      reasons.push(`距地标 ${Math.round(dist)} 米`);
-    } else if (dist <= 2200) {
+      reasons.push(`距选定地点 ${formatDistance(dist)}`);
+    } else if (dist <= maxR * 0.75) {
+      score += 13;
+      reasons.push(`距选定地点 ${formatDistance(dist)}`);
+    } else if (dist <= maxR) {
       score += 8;
     } else {
-      score += 3;
+      score -= 10;
     }
   }
 
@@ -188,34 +206,39 @@ function scoreRestaurant(poi, { headcount = 4, perCapita = 120, scene = "朋友�
   };
 }
 
-export function selectTopThreeRestaurants(pois = [], req = {}) {
+/**
+ * 按用户指定数量（1~10 家）筛选最合适的餐厅，避免同品牌扎堆并保留真实候补池
+ */
+export function selectTopRestaurants(pois = [], req = {}, limit = 3) {
+  const count = normalizeShopCount(limit);
   const pref = String(req.preferences || "");
   const valid = (pois || []).filter((p) => p && p.name && !isNonDiningPoi(p, pref));
-  const pool = valid.length >= 3 ? valid : (pois || []).filter((p) => p && p.name);
+  const pool = valid.length >= count ? valid : (pois || []).filter((p) => p && p.name);
 
   const scored = pool.map((p) => scoreRestaurant(p, req)).sort((a, b) => b.matchScore - a.matchScore);
 
   const picked = [];
   const usedBrands = new Set();
   const cuisineCount = new Map();
+  const maxSameCuisine = count <= 3 ? 2 : Math.max(2, Math.ceil(count / 2));
 
-  // 第一轮：优先保证品牌不重复 + 品类多样（同一品类最多 2 家）
+  // 第一轮：优先保证品牌不重复 + 品类多样
   for (const item of scored) {
-    if (picked.length >= 3) break;
+    if (picked.length >= count) break;
     const brand = getBrandKey(item.name);
     const cKey = item.cuisine || "综合";
     if (usedBrands.has(brand)) continue;
-    if ((cuisineCount.get(cKey) || 0) >= 2 && scored.length > 5) continue;
+    if ((cuisineCount.get(cKey) || 0) >= maxSameCuisine && scored.length > count + 2) continue;
     picked.push(item);
     usedBrands.add(brand);
     cuisineCount.set(cKey, (cuisineCount.get(cKey) || 0) + 1);
   }
 
-  // 第二轮：若不足 3 家则按高分补足
-  if (picked.length < 3) {
+  // 第二轮：若不足目标数量则按高分补足
+  if (picked.length < count) {
     const pickedIds = new Set(picked.map((p) => p.id || p.name));
     for (const item of scored) {
-      if (picked.length >= 3) break;
+      if (picked.length >= count) break;
       const key = item.id || item.name;
       if (pickedIds.has(key)) continue;
       picked.push(item);
@@ -227,6 +250,10 @@ export function selectTopThreeRestaurants(pois = [], req = {}) {
   const backups = scored.filter((item) => !finalIds.has(item.id || item.name));
 
   return { picked, backups };
+}
+
+export function selectTopThreeRestaurants(pois = [], req = {}) {
+  return selectTopRestaurants(pois, req, 3);
 }
 
 export function estimateMealBudget({ restaurantCost, headcount = 4, targetPerCapita = 120 }) {
@@ -286,7 +313,7 @@ export function calculateAaSplit({ totalAmount = 0, headcount = 4, drinkTotal = 
       drinkerPerPerson,
       nonDrinkerPerPerson: foodPerPerson,
       perPerson: round1(total / n),
-      summaryText: `【今天吃这桌 · 支付宝群收款 AA 账单】\n总实付：¥${total}（共 ${n} 人，其中酒水 ¥${drink} 由 ${drinkers} 位喝酒同事/朋友均摊）\n• 喝酒人均：¥${drinkerPerPerson}（餐费 ¥${foodPerPerson} + 酒水 ¥${drinkPerDrinker}）\n• 不喝酒人均：¥${foodPerPerson}\n打开支付宝搜索「群收款」按上述金额发起即可。`,
+      summaryText: `【今天吃这桌 · AA 账单】\n总实付：¥${total}（共 ${n} 人，其中酒水 ¥${drink} 由 ${drinkers} 位喝酒伙伴均摊）\n• 喝酒人均：¥${drinkerPerPerson}（餐费 ¥${foodPerPerson} + 酒水 ¥${drinkPerDrinker}）\n• 不喝酒人均：¥${foodPerPerson}\n打开支付宝搜索「群收款」按上述金额发起即可。`,
     };
   }
 
@@ -301,13 +328,13 @@ export function calculateAaSplit({ totalAmount = 0, headcount = 4, drinkTotal = 
     drinkerPerPerson: perPerson,
     nonDrinkerPerPerson: perPerson,
     perPerson,
-    summaryText: `【今天吃这桌 · 支付宝群收款 AA 账单】\n总实付：¥${total}（共 ${n} 人均摊）\n• 每人应付：¥${perPerson}\n打开支付宝搜索「群收款」输入总金额 ¥${total}、${n} 人即可一键收款。`,
+    summaryText: `【今天吃这桌 · AA 账单】\n总实付：¥${total}（共 ${n} 人均摊）\n• 每人应付：¥${perPerson}\n打开支付宝搜索「群收款」输入总金额 ¥${total}、${n} 人即可一键发起。`,
   };
 }
 
 export function buildAbaoPrompt(restaurant, headcount = 4, perCapita = 120) {
   const addr = restaurant.address ? `（${restaurant.address}）` : "";
-  return `帮我查一下「${restaurant.name}」${addr}在支付宝口碑和团购里，有没有适合${headcount}人聚餐（人均约¥${perCapita}）的团购套餐或代金券，以及大家最推荐的招牌菜和避雷菜。`;
+  return `帮我查一下「${restaurant.name}」${addr}在支付宝口碑和高德里，有没有适合${headcount}人聚餐（人均约¥${perCapita}）的团购套餐或代金券，以及大家最推荐的招牌菜和避雷菜。`;
 }
 
 export function buildAmapUrl(restaurant) {
@@ -319,17 +346,20 @@ export function buildAmapUrl(restaurant) {
   return `https://ditu.amap.com/search?query=${name}`;
 }
 
-export function buildInviteText({ restaurant, headcount, scene, dishes = [], estimatedTotal, timeText = "今晚 18:30" }) {
-  const dishLine = dishes.length ? dishes.join("、") : "到店按招牌菜点单";
-  const per = Math.round((Number(estimatedTotal) || 0) / Math.max(Number(headcount) || 1, 1));
+export function buildAlipayAaScheme() {
+  return "alipays://platformapi/startapp?appId=20000116";
+}
+
+/**
+ * 简洁得体的约饭定店通知（不含参考点菜和预计花销，符合真实社交礼仪）
+ */
+export function buildInviteText({ restaurant, headcount, scene, timeText = "今晚 18:30" }) {
   return [
     `【今天吃这桌 · 聚餐定店通知】`,
     `时间：${timeText}（${scene || "聚餐"} · ${headcount}人）`,
-    `餐厅：${restaurant.name}${restaurant.rating ? `（高德 ${restaurant.rating} 分）` : ""}`,
+    `餐厅：${restaurant.name}${restaurant.rating ? `（评分 ${restaurant.rating}）` : ""}`,
     `地址：${restaurant.address || "见高德导航"}`,
     `高德导航：${buildAmapUrl(restaurant)}`,
-    `参考点菜：${dishLine}`,
-    `预计花销：约 ¥${estimatedTotal}（折合人均 ¥${per}，买团购/代金券更省）`,
   ].join("\n");
 }
 
@@ -410,7 +440,7 @@ export function buildFallbackPlan(restaurant, req, quota) {
   dishes.push({
     category: "招牌硬菜",
     name: `门店口碑 Top 招牌主菜 ×${quota.hot}`,
-    reason: `按 ${req.headcount} 人「${req.scene}」配足核心蛋白硬菜${req.preferences ? `（注意：${req.preferences}）` : ""}`,
+    reason: `按${req.headcount}人「${req.scene}」配足核心硬菜${req.preferences ? `（注意：${req.preferences}）` : ""}`,
     estPrice: Math.round(baseUnit * 1.35) * quota.hot,
   });
   dishes.push({
@@ -429,13 +459,13 @@ export function buildFallbackPlan(restaurant, req, quota) {
   return {
     restaurantId: restaurant.id,
     restaurantName: restaurant.name,
-    highlightTag: restaurant.matchReasons?.[0] || "真实口碑优选",
-    whyChoose: `${restaurant.name} 位于${restaurant.address || "所选地标附近"}，高德评分 ${restaurant.rating || "暂无"}，真实人均约 ¥${est.estimatedPerCapita}，与本次 ${req.headcount} 人「${req.scene}」贴合度高。`,
+    highlightTag: restaurant.matchReasons?.[0] || "口碑优选",
+    whyChoose: `${restaurant.name} 位于${restaurant.address || "所选地标附近"}，评分 ${restaurant.rating || "暂无"}，参考人均约 ¥${est.estimatedPerCapita}，与本次 ${req.headcount} 人「${req.scene}」贴合度高。`,
     dishes,
     estimatedTotal: est.estimatedTotal,
     estimatedPerCapita: est.estimatedPerCapita,
-    groupBuyStrategy: `建议到店前先用下方「问阿宝查团购」核对该店是否有「满100减代金券」或「${req.headcount <= 4 ? "2-4人" : "4-6人"}口碑套餐」；若套餐菜品有忌口，优先买代金券叠加单点更灵活。`,
-    avoidTip: `建议总菜数控制在 ${quota.totalDishes} 道左右（${quota.formulaText}），不够再加 1 道主食，避免聚餐点多浪费。`,
+    groupBuyStrategy: `建议到店前先在支付宝口碑或高德查看该店是否有「满100减代金券」或「${req.headcount <= 4 ? "2-4人" : "4-6人"}团购套餐」；若套餐菜品有忌口，优先买代金券叠加单点更灵活。`,
+    avoidTip: `建议总菜数控制在 ${quota.totalDishes} 道左右（${quota.formulaText}），不够再加 1 道主食，避免点多浪费。`,
     isFallback: true,
   };
 }
