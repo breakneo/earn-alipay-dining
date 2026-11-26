@@ -7,7 +7,7 @@
 
 import { extractJsonPayload, buildFallbackPlan, estimateMealBudget } from "./engine.js";
 
-const FALLBACK_WORKER = "https://alipay-dining-proxy.breakneo.workers.dev";
+const FALLBACK_ORIGIN = "https://eat.breakneo.dpdns.org";
 
 function getEndpoints() {
   if (typeof window !== "undefined") {
@@ -20,7 +20,7 @@ function getEndpoints() {
       return { poi: "/api/poi", chat: "/api/chat" };
     }
   }
-  return { poi: `${FALLBACK_WORKER}/poi`, chat: `${FALLBACK_WORKER}/chat` };
+  return { poi: `${FALLBACK_ORIGIN}/api/poi`, chat: `${FALLBACK_ORIGIN}/api/chat` };
 }
 
 function sleep(ms) {
@@ -44,9 +44,10 @@ export function formatFriendlyNetworkError(err, sceneLabel = "网络请求") {
 async function fetchJsonResilient(
   url,
   options,
-  { timeoutMs = 10000, retries = 2, getFallbackUrl = null, signal = null, sceneLabel = "请求" } = {}
+  { timeoutMs = 12000, retries = 1, altRequest = null, signal = null, sceneLabel = "请求" } = {}
 ) {
   let lastErr = null;
+  let lastDiag = "";
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (signal?.aborted) {
       const abortErr = new Error("请求已取消");
@@ -54,15 +55,15 @@ async function fetchJsonResilient(
       throw abortErr;
     }
 
-    const useGetFallback = attempt === retries && typeof getFallbackUrl === "function";
-    const reqUrl = useGetFallback ? getFallbackUrl() : url;
-    const reqInit = useGetFallback
-      ? { method: "GET", cache: "no-store", headers: { Accept: "application/json" } }
-      : { ...options, cache: "no-store" };
+    const useAlt = attempt > 0 && typeof altRequest === "function";
+    const built = useAlt ? altRequest(attempt) : { url, init: options };
+    const reqUrl = built.url;
+    const reqInit = { ...built.init, cache: "no-store" };
 
     const controller = new AbortController();
     const onExternalAbort = () => controller.abort();
     signal?.addEventListener("abort", onExternalAbort, { once: true });
+    const t0 = Date.now();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
@@ -73,8 +74,10 @@ async function fetchJsonResilient(
       }
       const err = new Error(data.error || `${sceneLabel}繁忙（HTTP ${resp.status}）`);
       err.status = resp.status;
+      lastDiag = `${reqInit.method || "GET"} ${reqUrl.split("?")[0]} · HTTP ${resp.status} · ${((Date.now() - t0) / 1000).toFixed(1)}s`;
       // 4xx 客户端业务错误直接返回，无需重试
       if (resp.status >= 400 && resp.status < 500 && resp.status !== 408 && resp.status !== 429) {
+        err.diag = lastDiag;
         throw err;
       }
       lastErr = err;
@@ -87,6 +90,7 @@ async function fetchJsonResilient(
       if (err?.status >= 400 && err?.status < 500 && err?.status !== 408 && err?.status !== 429) {
         throw err;
       }
+      lastDiag = `${reqInit.method || "GET"} ${reqUrl.split("?")[0]} · ${err?.name || "Error"} · ${((Date.now() - t0) / 1000).toFixed(1)}s`;
       lastErr = err;
     } finally {
       clearTimeout(timer);
@@ -94,37 +98,46 @@ async function fetchJsonResilient(
     }
 
     if (attempt < retries) {
-      await sleep(450 * (attempt + 1));
+      await sleep(400 * (attempt + 1));
     }
   }
-  throw new Error(formatFriendlyNetworkError(lastErr, sceneLabel));
+  const finalErr = new Error(formatFriendlyNetworkError(lastErr, sceneLabel));
+  const host = typeof window !== "undefined" ? window.location.host : "node";
+  finalErr.diag = `${host} · ${lastDiag}`;
+  throw finalErr;
 }
 
+/**
+ * 周边真实饭馆查询：优先走简单 GET（零 CORS 预检、手机浏览器/支付宝内嵌页最稳、可命中 120s 边缘缓存），失败自动切 POST 重试
+ */
 export async function fetchRealRestaurants({ location, city = "", cuisine = "", radius = 2000, count = 3, signal = null }) {
   const { poi } = getEndpoints();
+  const qs = new URLSearchParams({
+    location,
+    city,
+    cuisine,
+    radius: String(radius),
+    count: String(count),
+  });
   return fetchJsonResilient(
-    poi,
+    `${poi}?${qs.toString()}`,
     {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ location, city, cuisine, radius, count }),
+      method: "GET",
+      headers: { Accept: "application/json" },
     },
     {
-      timeoutMs: 10000,
-      retries: 2,
+      timeoutMs: 12000,
+      retries: 1,
       signal,
       sceneLabel: "查询周边饭馆",
-      getFallbackUrl: () => {
-        const qs = new URLSearchParams({
-          location,
-          city,
-          cuisine,
-          radius: String(radius),
-          count: String(count),
-          _t: String(Date.now()),
-        });
-        return `${poi}?${qs.toString()}`;
-      },
+      altRequest: () => ({
+        url: poi,
+        init: {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ location, city, cuisine, radius, count }),
+        },
+      }),
     }
   );
 }

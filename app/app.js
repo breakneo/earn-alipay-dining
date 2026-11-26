@@ -19,7 +19,7 @@ import {
   generateSingleShopPlan,
   compareGroupBuyWithAI,
   buildOverallAdvice,
-} from "./api.js";
+} from "./api.js?v=20261127c";
 
 const PRESETS = {
   hz: { loc: "杭州黄龙万科中心", radius: "2000", count: "3", people: "4", mode: "per_capita", budget: "120", scene: "朋友小聚", pref: "不吃辣" },
@@ -298,10 +298,14 @@ function setLoading(isLoading, title = "", sub = "") {
   }
 }
 
-function showError(msg) {
+function showError(msg, diag = "") {
+  const diagHtml = diag ? `<div style="font-size:11.5px;color:#9a5b54;margin-top:4px;word-break:break-all;">连接详情：${escapeHtml(diag)}</div>` : "";
   els.errorSection.innerHTML = `
     <div class="error-row">
-      <span>${escapeHtml(msg)}</span>
+      <div>
+        <div>${escapeHtml(msg)}</div>
+        ${diagHtml}
+      </div>
       <button type="button" class="btn-outline btn-sm" id="retrySearchBtn">重新尝试</button>
     </div>
   `;
@@ -777,7 +781,7 @@ async function handleSearchSubmit(evt) {
     if (runId !== activeSearchId || err?.name === "UserAbortError") return;
     setLoading(false);
     state.isStreaming = false;
-    showError(err?.message || "网络连接异常，请检查网络后重试");
+    showError(err?.message || "网络连接异常，请检查网络后重试", err?.diag || "");
   }
 }
 

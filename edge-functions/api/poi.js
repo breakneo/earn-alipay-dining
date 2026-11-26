@@ -12,12 +12,12 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-function jsonResp(data, status = 200) {
+function jsonResp(data, status = 200, cacheControl = "no-store") {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
+      "Cache-Control": cacheControl,
       ...CORS_HEADERS,
     },
   });
@@ -136,7 +136,7 @@ async function searchNearbyRestaurants(anchorLoc, cuisine, radius, amapKey) {
   return Array.isArray(data.pois) ? data.pois.map(normalizePoi).filter((p) => p.name) : [];
 }
 
-async function handlePoiQuery(params, env) {
+async function handlePoiQuery(params, env, allowCache = false) {
   const amapKey =
     env?.AMAP_API_KEY ||
     (typeof process !== "undefined" ? process.env?.AMAP_API_KEY : "") ||
@@ -171,18 +171,22 @@ async function handlePoiQuery(params, env) {
     }
   }
 
-  return jsonResp({
-    anchor,
-    total: pois.length,
-    restaurants: pois.slice(0, 25),
-  });
+  return jsonResp(
+    {
+      anchor,
+      total: pois.length,
+      restaurants: pois.slice(0, 25),
+    },
+    200,
+    allowCache ? "public, max-age=120" : "no-store"
+  );
 }
 
 export async function onRequestPost(context) {
   try {
     const { request, env } = context || {};
     const body = await request.json();
-    return await handlePoiQuery(body || {}, env);
+    return await handlePoiQuery(body || {}, env, false);
   } catch (err) {
     return jsonResp({ error: err?.message || "查询周边餐厅失败" }, 502);
   }
@@ -200,7 +204,8 @@ export async function onRequestGet(context) {
         radius: url.searchParams.get("radius") || "2000",
         count: url.searchParams.get("count") || "3",
       },
-      env
+      env,
+      true
     );
   } catch (err) {
     return jsonResp({ error: err?.message || "查询周边餐厅失败" }, 502);
