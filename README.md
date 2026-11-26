@@ -10,7 +10,8 @@
 4. **拍板收尾闭环**：点击「就定这家」一键生成微信/钉钉约饭通知、导出 `.ics` 手机日历提醒，并用支付宝群收款 AA 精算器（支持区分喝酒/不喝酒分摊）完成饭后算账。
 
 ## 在线体验
-- 线上地址：`https://breakneo.github.io/earn-alipay-dining/`（免登录、免配置密钥，打开即用）
+- 国内直连正式地址（腾讯云 EdgeOne）：`https://jintianchizhezhuo-2hfwahkb.edgeone.dev`（免登录、免配置密钥、国内手机与支付宝扫码直连秒开）
+- 备用镜像（GitHub Pages）：`https://breakneo.github.io/earn-alipay-dining/`
 
 ## 项目结构
 - `app/`：纯中文零依赖响应式前端与核心决策引擎（`engine.js`、`api.js`、`app.js`、`index.html`、`styles.css`）

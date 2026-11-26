@@ -2,6 +2,15 @@
 node_modules/
 proxy/.wrangler/
 .edgeone/
+dist-eo/
 .env
 *.local
 submission/_frames/
+
+# Tencent Cloud EdgeOne
+.env
+.edgeone/*
+.tef_dist/*
+  
+tmp/
+*.env*

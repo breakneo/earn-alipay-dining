@@ -16,9 +16,14 @@ function jsonResp(data, status = 200) {
   });
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost(context) {
   try {
-    if (!env?.SCNET_API_KEY) {
+    const { request, env } = context || {};
+    const scnetKey =
+      env?.SCNET_API_KEY ||
+      (typeof process !== "undefined" ? process.env?.SCNET_API_KEY : "") ||
+      "";
+    if (!scnetKey) {
       return jsonResp({ error: "服务端尚未配置推理服务密钥" }, 503);
     }
     const body = await request.json();
@@ -30,7 +35,7 @@ export async function onRequestPost({ request, env }) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${env.SCNET_API_KEY}`,
+        Authorization: `Bearer ${scnetKey}`,
       },
       body: JSON.stringify({
         model: LOCKED_MODEL,

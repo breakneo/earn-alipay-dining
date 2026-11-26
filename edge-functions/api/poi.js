@@ -114,9 +114,14 @@ async function searchNearbyRestaurants(anchorLoc, cuisine, radius, amapKey) {
   return Array.isArray(data.pois) ? data.pois.map(normalizePoi).filter((p) => p.name) : [];
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost(context) {
   try {
-    if (!env?.AMAP_API_KEY) {
+    const { request, env } = context || {};
+    const amapKey =
+      env?.AMAP_API_KEY ||
+      (typeof process !== "undefined" ? process.env?.AMAP_API_KEY : "") ||
+      "";
+    if (!amapKey) {
       return jsonResp({ error: "服务端尚未配置地图服务密钥" }, 503);
     }
     const body = await request.json();
@@ -128,14 +133,14 @@ export async function onRequestPost({ request, env }) {
     const cuisine = String(body.cuisine || "").trim();
     const radius = Number(body.radius) || 2000;
 
-    const anchor = await resolveAnchor(locationText, city, env.AMAP_API_KEY);
+    const anchor = await resolveAnchor(locationText, city, amapKey);
     if (!anchor) {
       return jsonResp({ error: `未找到「${locationText}」，请补充城市或附近地铁站/商圈名` }, 404);
     }
 
-    let pois = await searchNearbyRestaurants(anchor.location, cuisine, radius, env.AMAP_API_KEY);
+    let pois = await searchNearbyRestaurants(anchor.location, cuisine, radius, amapKey);
     if (pois.length < 10 && cuisine && cuisine !== "不限") {
-      const broader = await searchNearbyRestaurants(anchor.location, "", radius, env.AMAP_API_KEY);
+      const broader = await searchNearbyRestaurants(anchor.location, "", radius, amapKey);
       const seen = new Set(pois.map((p) => p.id));
       for (const item of broader) {
         if (!seen.has(item.id)) {
