@@ -1,0 +1,6 @@
+.DS_Store
+node_modules/
+proxy/.wrangler/
+.env
+*.local
+submission/_frames/

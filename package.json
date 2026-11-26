@@ -1,0 +1,10 @@
+{
+  "name": "earn-alipay-dining",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "今天吃这桌 — 面向支付宝「智能体涌现奖」2026 第一期的聚餐选店、按人数点菜、团购比价与预算测算智能体",
+  "scripts": {
+    "test": "node --test tests/test_engine.mjs"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "name": "today-table-guide",
+  "version": "1.0.0",
+  "description": "今天吃这桌：聚餐真实选店、按人数配菜、团购比价与 AA 分账工具集",
+  "tools": [
+    {
+      "name": "search_nearby_restaurants",
+      "description": "通过高德开放平台 Web 服务实时检索目标地点周边真实营业餐厅（含评分、人均、距离与地址）",
+      "parameters": {
+        "type": "object",
+        "required": ["location"],
+        "properties": {
+          "location": { "type": "string", "description": "聚餐地点，如杭州黄龙万科中心、北京国贸" },
+          "city": { "type": "string", "description": "可选城市名" },
+          "cuisine": { "type": "string", "description": "可选菜系关键词，如江浙菜、火锅、粤菜" },
+          "radius": { "type": "number", "description": "搜索半径（米），默认 2000，范围 500-5000" }
+        }
+      }
+    },
+    {
+      "name": "plan_three_tables",
+      "description": "针对筛选出的 3 家真实餐厅，按人数、场景、预算与忌口生成完整点菜方案、预算估算与团购策略",
+      "parameters": {
+        "type": "object",
+        "required": ["restaurants", "headcount", "perCapita", "scene"],
+        "properties": {
+          "restaurants": { "type": "array", "description": "3 家真实高德餐厅对象" },
+          "headcount": { "type": "integer", "description": "聚餐人数（1-30）" },
+          "perCapita": { "type": "number", "description": "目标人均预算（元）" },
+          "scene": { "type": "string", "enum": ["朋友小聚", "单位聚餐", "商务宴请", "家庭聚餐"] },
+          "preferences": { "type": "string", "description": "口味偏好与忌口说明" }
+        }
+      }
+    },
+    {
+      "name": "compare_group_buy",
+      "description": "将用户粘贴的真实团购套餐/代金券文案与单点方案对比，核算份量、忌口冲突与省钱差价",
+      "parameters": {
+        "type": "object",
+        "required": ["restaurantName", "headcount", "alaCarteEstimatedTotal", "pastedText"],
+        "properties": {
+          "restaurantName": { "type": "string" },
+          "headcount": { "type": "integer" },
+          "alaCarteEstimatedTotal": { "type": "number" },
+          "pastedText": { "type": "string", "description": "从支付宝/阿宝/点评复制的真实团购文字" }
+        }
+      }
+    },
+    {
+      "name": "calculate_aa_split",
+      "description": "生成支付宝群收款 AA 分账结果，支持均摊与区分酒水费用分摊",
+      "parameters": {
+        "type": "object",
+        "required": ["totalAmount", "headcount"],
+        "properties": {
+          "totalAmount": { "type": "number", "description": "最终实付总金额（元）" },
+          "headcount": { "type": "integer", "description": "总人数" },
+          "drinkTotal": { "type": "number", "description": "酒水费（元，可选）" },
+          "drinkersCount": { "type": "integer", "description": "喝酒人数（可选）" }
+        }
+      }
+    }
+  ]
+}
