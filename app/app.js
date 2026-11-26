@@ -9,6 +9,7 @@ import {
   calculateAaSplit,
   buildAbaoPrompt,
   buildAmapUrl,
+  buildAlipaySearchScheme,
   buildInviteText,
   buildIcsCalendar,
 } from "./engine.js";
@@ -74,6 +75,11 @@ const els = {
   aaDrinkersInput: document.getElementById("aaDrinkersInput"),
   aaResultBox: document.getElementById("aaResultBox"),
   copyAaBtn: document.getElementById("copyAaBtn"),
+  pickerBackdrop: document.getElementById("pickerBackdrop"),
+  pickerSheet: document.getElementById("pickerSheet"),
+  pickerSheetTitle: document.getElementById("pickerSheetTitle"),
+  pickerCloseBtn: document.getElementById("pickerCloseBtn"),
+  pickerOptions: document.getElementById("pickerOptions"),
   toast: document.getElementById("toast"),
 };
 
@@ -82,13 +88,13 @@ function showToast(msg) {
   els.toast.textContent = msg;
   els.toast.classList.remove("hidden");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => els.toast.classList.add("hidden"), 2600);
+  toastTimer = setTimeout(() => els.toast.classList.add("hidden"), 2800);
 }
 
 async function copyText(text, successMsg) {
   try {
     await navigator.clipboard.writeText(text);
-    showToast(successMsg);
+    if (successMsg) showToast(successMsg);
   } catch {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -96,7 +102,7 @@ async function copyText(text, successMsg) {
     ta.select();
     document.execCommand("copy");
     ta.remove();
-    showToast(successMsg);
+    if (successMsg) showToast(successMsg);
   }
 }
 
@@ -108,6 +114,124 @@ function escapeHtml(str = "") {
     .replaceAll('"', "&quot;");
 }
 
+function isMobileDevice() {
+  return /Android|iPhone|iPad|iPod|HarmonyOS|AlipayClient|MicroMessenger/i.test(navigator.userAgent || "");
+}
+
+/* =========================
+   统一高颜值自定义下拉组件
+   ========================= */
+const customTriggers = new Map();
+let activeSelectEl = null;
+
+const CHEVRON_SVG = `<svg class="ui-select-chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5.5 7.75L10 12.25L14.5 7.75" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+function syncCustomSelectUI(selectEl) {
+  const trigger = customTriggers.get(selectEl);
+  if (!trigger) return;
+  const opt = selectEl.options[selectEl.selectedIndex];
+  const valSpan = trigger.querySelector(".ui-select-value");
+  const isEmpty = !opt || opt.value === "";
+  const sub = opt?.dataset?.sub;
+  valSpan.textContent = !isEmpty && sub && selectEl.id === "presetSelect"
+    ? `${opt.textContent} · ${sub}`
+    : (opt?.textContent || "请选择");
+  valSpan.classList.toggle("is-placeholder", isEmpty);
+}
+
+function closePicker() {
+  if (activeSelectEl) {
+    customTriggers.get(activeSelectEl)?.classList.remove("open");
+    activeSelectEl = null;
+  }
+  els.pickerBackdrop.classList.add("hidden");
+  els.pickerSheet.classList.add("hidden");
+  els.pickerBackdrop.setAttribute("aria-hidden", "true");
+}
+
+function openPicker(selectEl) {
+  if (activeSelectEl === selectEl) {
+    closePicker();
+    return;
+  }
+  closePicker();
+  activeSelectEl = selectEl;
+  const trigger = customTriggers.get(selectEl);
+  trigger?.classList.add("open");
+
+  els.pickerSheetTitle.textContent = selectEl.dataset.pickerTitle || "请选择";
+  const opts = Array.from(selectEl.options);
+  els.pickerOptions.innerHTML = opts
+    .map((o, idx) => {
+      const selected = idx === selectEl.selectedIndex;
+      const sub = o.dataset.sub ? `<span class="picker-opt-sub">${escapeHtml(o.dataset.sub)}</span>` : "";
+      return `
+        <button type="button" class="picker-option ${selected ? "selected" : ""}" role="option" aria-selected="${selected}" data-opt-value="${escapeHtml(o.value)}">
+          <span class="picker-opt-main">
+            <span class="picker-opt-label">${escapeHtml(o.textContent)}</span>
+            ${sub}
+          </span>
+          <span class="picker-check" aria-hidden="true">✓</span>
+        </button>
+      `;
+    })
+    .join("");
+
+  els.pickerBackdrop.classList.remove("hidden");
+  els.pickerSheet.classList.remove("hidden");
+  els.pickerBackdrop.setAttribute("aria-hidden", "false");
+
+  // 桌面端智能贴合触发器定位（手机端由 CSS 自动切换为底部 Bottom Sheet）
+  if (window.innerWidth > 760 && trigger) {
+    const rect = trigger.getBoundingClientRect();
+    const sheetW = Math.max(rect.width, 260);
+    const left = Math.min(Math.max(12, rect.left), window.innerWidth - sheetW - 12);
+    const estH = Math.min(opts.length * 54 + 56, 360);
+    const spaceBelow = window.innerHeight - rect.bottom - 16;
+    const top = spaceBelow >= estH || spaceBelow >= 200
+      ? rect.bottom + 6
+      : Math.max(12, rect.top - estH - 6);
+    els.pickerSheet.style.left = `${left}px`;
+    els.pickerSheet.style.top = `${top}px`;
+    els.pickerSheet.style.width = `${sheetW}px`;
+  }
+}
+
+function initCustomSelects() {
+  document.querySelectorAll("select.native-select").forEach((selectEl) => {
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "ui-select-trigger";
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.innerHTML = `<span class="ui-select-value"></span>${CHEVRON_SVG}`;
+    selectEl.insertAdjacentElement("afterend", trigger);
+    customTriggers.set(selectEl, trigger);
+    syncCustomSelectUI(selectEl);
+
+    trigger.addEventListener("click", () => openPicker(selectEl));
+    selectEl.addEventListener("change", () => syncCustomSelectUI(selectEl));
+  });
+
+  els.pickerOptions.addEventListener("click", (e) => {
+    const optBtn = e.target.closest(".picker-option");
+    if (!optBtn || !activeSelectEl) return;
+    const targetSelect = activeSelectEl;
+    targetSelect.value = optBtn.dataset.optValue;
+    syncCustomSelectUI(targetSelect);
+    closePicker();
+    targetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  els.pickerBackdrop.addEventListener("click", closePicker);
+  els.pickerCloseBtn.addEventListener("click", closePicker);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closePicker();
+  });
+  window.addEventListener("resize", () => {
+    if (activeSelectEl) closePicker();
+  });
+}
+
 function updateQuotaPreview() {
   const b = normalizeBudget({
     headcount: els.headcountInput.value,
@@ -116,7 +240,7 @@ function updateQuotaPreview() {
   });
   const count = normalizeShopCount(els.countSelect.value);
   const q = computeDishQuota(b.headcount, els.sceneSelect.value);
-  els.quotaPreview.innerHTML = `配菜标准：<strong>${b.headcount}人 · ${escapeHtml(q.scene)}</strong>，建议 <strong>${escapeHtml(q.formulaText)}</strong>（目标总预算约 ¥${b.totalBudget}，人均 ¥${b.perCapita}）`;
+  els.quotaPreview.innerHTML = `配菜标准：<strong>${b.headcount}人 · ${escapeHtml(q.scene)}</strong>，建议 <strong>${escapeHtml(q.formulaText)}</strong>（目标总预算约 ¥${b.totalBudget}，人均 ¥${b.perCapita}，<strong>不含酒水</strong>）`;
   els.submitBtn.textContent = `帮我挑 ${count} 家并配菜`;
 }
 
@@ -193,9 +317,9 @@ function renderResults() {
   els.anchorMeta.textContent = `${anchorLabel || state.req.location} · ${rangeLabel}内`;
   els.overallAdvice.textContent = state.overallAdvice;
   els.planMetaPills.innerHTML = [
-    `<span class="meta-pill">精选 ${state.picked.length} 家</span>`,
+    `<span class="meta-pill">甄选 ${state.picked.length} 家</span>`,
     `<span class="meta-pill">${state.req.headcount}人 · ${escapeHtml(state.req.scene)}</span>`,
-    `<span class="meta-pill">目标预算 ¥${state.req.totalBudget}（人均¥${state.req.perCapita}）</span>`,
+    `<span class="meta-pill">预算 ¥${state.req.totalBudget}（人均¥${state.req.perCapita}，不含酒水）</span>`,
     `<span class="meta-pill">${escapeHtml(state.quota.formulaText)}</span>`,
   ].join("");
 
@@ -242,7 +366,7 @@ function renderResults() {
     })
     .join("");
 
-  // 3. 卡片列数适配（1家居中、2家双列、3家及以上三列）
+  // 3. 卡片列数适配
   els.cardsGrid.className = "cards-grid" + (state.picked.length === 1 ? " cols-1" : state.picked.length === 2 ? " cols-2" : "");
 
   // 4. 餐厅决策方案卡
@@ -294,14 +418,14 @@ function renderResults() {
           <div>
             <div class="block-title">
               <span>按 ${state.req.headcount} 人配好这一桌</span>
-              <span style="font-size:11px;font-weight:400;color:#8c8378;">估价供参考</span>
+              <span style="font-size:11px;font-weight:400;color:#8c8378;">不含酒水 · 供参考</span>
             </div>
             <ul class="dish-list">${dishRows}</ul>
           </div>
 
           <div class="budget-strip">
             <div>
-              <div style="font-size:12px;color:#8c8378;">本桌参考总价 / 折合人均</div>
+              <div style="font-size:12px;color:#8c8378;">本桌参考总价（不含酒水）</div>
               <strong>约 ¥${estTotal}</strong> <span style="color:#5c544c;">（¥${estPer}/人）</span>
             </div>
             ${renderBudgetBadge(estTotal, state.req.totalBudget)}
@@ -315,7 +439,7 @@ function renderResults() {
           ${plan?.avoidTip ? `<p class="avoid-note">点菜提醒：${escapeHtml(plan.avoidTip)}</p>` : ""}
 
           <div class="card-actions">
-            <button type="button" class="btn-alipay btn-sm" data-abao-idx="${idx}">复制问阿宝查团购</button>
+            <button type="button" class="btn-alipay btn-sm" data-abao-idx="${idx}">去支付宝问阿宝查团购</button>
             <a class="btn-outline btn-sm" href="${amapUrl}" target="_blank" rel="noopener noreferrer">高德地图直达</a>
             <button type="button" class="btn-outline btn-sm full-span" data-toggle-gb="${idx}">
               粘贴支付宝/口碑团购文案，帮我算差价
@@ -483,7 +607,7 @@ async function handleSearchSubmit(evt) {
 
     setLoading(
       true,
-      `已选出 ${picked.length} 家候选饭馆，正在按 ${req.headcount} 人配菜算账…`,
+      `已甄选 ${picked.length} 家候选饭馆，正在按 ${req.headcount} 人配菜算账…`,
       picked.slice(0, 4).map((p) => p.name).join(" · ") + (picked.length > 4 ? ` 等 ${picked.length} 家` : "")
     );
 
@@ -524,6 +648,7 @@ function initEvents() {
     els.budgetInput.value = p.budget;
     els.sceneSelect.value = p.scene;
     els.prefInput.value = p.pref;
+    [els.radiusSelect, els.countSelect, els.sceneSelect].forEach(syncCustomSelectUI);
     syncTagChips();
     updateQuotaPreview();
     showToast("已填入常见聚餐场景，点击下方按钮即可开始挑店");
@@ -563,8 +688,16 @@ function initEvents() {
     const abaoBtn = e.target.closest("[data-abao-idx]");
     if (abaoBtn) {
       const idx = Number(abaoBtn.dataset.abaoIdx);
-      const prompt = buildAbaoPrompt(state.picked[idx], state.req.headcount, state.req.perCapita);
-      copyText(prompt, "已复制查团购指令，打开支付宝阿宝粘贴即可查该店实时团购");
+      const shop = state.picked[idx];
+      const prompt = buildAbaoPrompt(shop, state.req.headcount, state.req.perCapita);
+      const schemeUrl = buildAlipaySearchScheme(shop);
+      copyText(prompt, "");
+      if (isMobileDevice()) {
+        showToast("正在拉起支付宝搜索该店团购（问阿宝词已自动复制）");
+        window.location.href = schemeUrl;
+      } else {
+        showToast("已复制问阿宝指令；在手机端点击此按钮可直接拉起支付宝");
+      }
       return;
     }
 
@@ -627,5 +760,6 @@ function initEvents() {
   els.copyAaBtn.addEventListener("click", () => copyText(els.aaResultBox.textContent, "已复制账单文案，可去支付宝发起群收款"));
 }
 
+initCustomSelects();
 updateQuotaPreview();
 initEvents();

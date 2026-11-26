@@ -22,22 +22,24 @@
       <main>
         <!-- 输入表单卡 -->
         <section class="panel search-panel" aria-label="聚餐需求输入">
-          <div class="preset-row">
-            <label class="preset-select-wrap" for="presetSelect">
-              <span class="preset-label">快捷试玩</span>
-              <select id="presetSelect" class="preset-select">
-                <option value="">选择常见聚餐场景，一键填入体验…</option>
-                <option value="hz">杭州黄龙万科中心 · 4人朋友小聚 · 人均120 · 不吃辣</option>
-                <option value="bj">北京国贸 · 8人单位聚餐 · 总预算1400 · 清淡少油</option>
-                <option value="sh">上海陆家嘴 · 6人商务宴请 · 人均200 · 江浙菜</option>
-                <option value="cd">成都太古里 · 5人朋友小聚 · 人均100 · 火锅</option>
-              </select>
-            </label>
-          </div>
-
           <form id="diningForm" class="dining-form">
-            <div class="form-grid">
-              <label class="field field-wide">
+            <!-- 快捷试玩（与下方所有下拉 100% 统一视觉与精致弹窗） -->
+            <div class="form-row-1 preset-row">
+              <div class="field">
+                <span class="field-label">快捷试玩</span>
+                <select id="presetSelect" class="native-select" data-picker-title="选择快捷试玩场景">
+                  <option value="">选择常见聚餐场景，一键填入体验…</option>
+                  <option value="hz" data-sub="4人朋友小聚 · 人均120 · 不吃辣">杭州黄龙万科中心</option>
+                  <option value="bj" data-sub="8人单位聚餐 · 总预算1400 · 清淡少油">北京国贸</option>
+                  <option value="sh" data-sub="6人商务宴请 · 人均200 · 江浙菜">上海陆家嘴</option>
+                  <option value="cd" data-sub="5人朋友小聚 · 人均100 · 想吃火锅">成都太古里</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 行 1：聚餐地点 + 搜索范围 + 甄选餐厅 -->
+            <div class="form-row-loc">
+              <label class="field field-loc">
                 <span class="field-label">聚餐地点（商圈 / 写字楼 / 地铁站）</span>
                 <input
                   id="locationInput"
@@ -49,33 +51,36 @@
                 />
               </label>
 
-              <label class="field">
+              <div class="field">
                 <span class="field-label">搜索范围</span>
-                <select id="radiusSelect">
-                  <option value="500">500米内（步行约6分钟）</option>
-                  <option value="1000">1公里内</option>
-                  <option value="2000" selected>2公里内（推荐）</option>
-                  <option value="3000">3公里内</option>
-                  <option value="5000">5公里内</option>
+                <select id="radiusSelect" class="native-select" data-picker-title="选择搜索范围">
+                  <option value="500" data-sub="步行约 6 分钟可达">500米内</option>
+                  <option value="1000" data-sub="步行约 12 分钟">1公里内</option>
+                  <option value="2000" selected data-sub="周边商圈精选（推荐）">2公里内</option>
+                  <option value="3000" data-sub="打车起步价范围">3公里内</option>
+                  <option value="5000" data-sub="跨商圈大范围备选">5公里内</option>
                 </select>
-              </label>
+              </div>
 
-              <label class="field">
-                <span class="field-label">筛选几家餐厅</span>
-                <select id="countSelect">
-                  <option value="1">1 家</option>
-                  <option value="2">2 家</option>
-                  <option value="3" selected>3 家（推荐）</option>
-                  <option value="4">4 家</option>
-                  <option value="5">5 家</option>
-                  <option value="6">6 家</option>
-                  <option value="7">7 家</option>
-                  <option value="8">8 家</option>
-                  <option value="9">9 家</option>
-                  <option value="10">10 家</option>
+              <div class="field">
+                <span class="field-label">甄选餐厅</span>
+                <select id="countSelect" class="native-select" data-picker-title="选择甄选餐厅家数">
+                  <option value="1" data-sub="直接锁定最稳 1 家">1 家</option>
+                  <option value="2" data-sub="双店对比不纠结">2 家</option>
+                  <option value="3" selected data-sub="多风味横评（推荐）">3 家</option>
+                  <option value="4" data-sub="4 家备选方案">4 家</option>
+                  <option value="5" data-sub="5 家备选方案">5 家</option>
+                  <option value="6" data-sub="6 家备选方案">6 家</option>
+                  <option value="7" data-sub="7 家备选方案">7 家</option>
+                  <option value="8" data-sub="8 家备选方案">8 家</option>
+                  <option value="9" data-sub="9 家备选方案">9 家</option>
+                  <option value="10" data-sub="最多 10 家全览">10 家</option>
                 </select>
-              </label>
+              </div>
+            </div>
 
+            <!-- 行 2：用餐人数 + 聚餐场景（严格同一行） -->
+            <div class="form-row-2">
               <label class="field">
                 <span class="field-label">用餐人数</span>
                 <div class="input-unit">
@@ -84,6 +89,19 @@
                 </div>
               </label>
 
+              <div class="field">
+                <span class="field-label">聚餐场景</span>
+                <select id="sceneSelect" class="native-select" data-picker-title="选择聚餐场景">
+                  <option value="朋友小聚" selected data-sub="轻松自在、兼顾氛围与性价比">朋友小聚</option>
+                  <option value="单位聚餐" data-sub="菜量充足、口味照顾多数同事">单位聚餐</option>
+                  <option value="商务宴请" data-sub="环境体面、硬菜拿得出手">商务宴请</option>
+                  <option value="家庭聚餐" data-sub="老少咸宜、清淡易消化">家庭聚餐</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 行 3：预算方式 + 人均预算 / 本桌总预算（严格同一行） -->
+            <div class="form-row-2">
               <div class="field">
                 <span class="field-label">预算方式</span>
                 <div class="segmented" role="group" aria-label="预算方式">
@@ -99,18 +117,11 @@
                   <input id="budgetInput" type="number" min="30" max="50000" step="10" value="120" required />
                 </div>
               </label>
+            </div>
 
+            <!-- 行 4：口味偏好与忌口 -->
+            <div class="form-row-1">
               <label class="field">
-                <span class="field-label">聚餐场景</span>
-                <select id="sceneSelect">
-                  <option value="朋友小聚">朋友小聚</option>
-                  <option value="单位聚餐">单位聚餐</option>
-                  <option value="商务宴请">商务宴请</option>
-                  <option value="家庭聚餐">家庭聚餐</option>
-                </select>
-              </label>
-
-              <label class="field field-full">
                 <span class="field-label">口味偏好与忌口（可选）</span>
                 <input
                   id="prefInput"
@@ -242,8 +253,19 @@
       </main>
 
       <footer class="site-footer">
-        <p>商户信息来源：高德地图 · 菜单单价与总价为结合门店人均的智能参考估算，实际以门店当日菜单及支付宝/口碑团购页为准。</p>
+        <p>商户信息来源：高德地图 · 菜单单价与总价为不含酒水的智能参考估算，实际以门店当日菜单及支付宝/口碑团购页为准。</p>
       </footer>
+    </div>
+
+    <!-- 统一高颜值自定义下拉弹出层（桌面端悬浮菜单 / 手机端原生质感底部抽屉） -->
+    <div id="pickerBackdrop" class="picker-backdrop hidden" aria-hidden="true"></div>
+    <div id="pickerSheet" class="picker-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="pickerSheetTitle">
+      <div class="picker-handle" aria-hidden="true"></div>
+      <div class="picker-header">
+        <span id="pickerSheetTitle" class="picker-title">请选择</span>
+        <button type="button" id="pickerCloseBtn" class="picker-close" aria-label="关闭">✕</button>
+      </div>
+      <div id="pickerOptions" class="picker-options" role="listbox"></div>
     </div>
 
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>

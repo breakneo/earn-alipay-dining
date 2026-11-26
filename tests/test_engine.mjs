@@ -12,6 +12,7 @@ import {
   calculateAaSplit,
   buildAbaoPrompt,
   buildAmapUrl,
+  buildAlipaySearchScheme,
   buildInviteText,
   buildIcsCalendar,
   extractJsonPayload,
@@ -214,6 +215,9 @@ test("buildAbaoPrompt 不含竞品字样，buildInviteText 简洁不含点菜与
 
   const url = buildAmapUrl(r);
   assert.ok(url.startsWith("https://uri.amap.com/marker?") && url.includes("120.128,30.275"));
+
+  const alipayUrl = buildAlipaySearchScheme(r);
+  assert.ok(alipayUrl.startsWith("alipays://platformapi/startapp?appId=20001003&keyword="));
 
   const invite = buildInviteText({ restaurant: r, headcount: 4, scene: "朋友小聚" });
   assert.ok(invite.includes(r.name) && invite.includes("高德导航"));

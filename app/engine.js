@@ -351,6 +351,14 @@ export function buildAlipayAaScheme() {
 }
 
 /**
+ * 支付宝内置搜索官方 Scheme（appId=20001003），手机端点击可直接拉起支付宝检索该店口碑/团购
+ */
+export function buildAlipaySearchScheme(restaurant) {
+  const kw = `${restaurant?.name || ""} 团购`.trim();
+  return `alipays://platformapi/startapp?appId=20001003&keyword=${encodeURIComponent(kw)}`;
+}
+
+/**
  * 简洁得体的约饭定店通知（不含参考点菜和预计花销，符合真实社交礼仪）
  */
 export function buildInviteText({ restaurant, headcount, scene, timeText = "今晚 18:30" }) {

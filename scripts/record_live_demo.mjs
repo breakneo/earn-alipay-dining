@@ -113,6 +113,7 @@ async function main() {
   const cdpPort = 19422 + Math.floor(Math.random() * 600);
   const tmpProfile = fs.mkdtempSync(path.join(os.tmpdir(), "today-table-rec-"));
 
+  const TARGET_URL = process.env.DEMO_URL || `http://127.0.0.1:${port}/index.html`;
   const chrome = spawn(
     CHROME,
     [
@@ -125,7 +126,8 @@ async function main() {
       "--force-device-scale-factor=1",
       "--no-first-run",
       "--no-default-browser-check",
-      `http://127.0.0.1:${port}/index.html`,
+      "--host-resolver-rules=MAP eat.breakneo.dpdns.org 43.174.247.115",
+      TARGET_URL,
     ],
     { stdio: "ignore" }
   );
@@ -220,14 +222,12 @@ async function main() {
     await setCaption("今天吃这桌 · 选定地点范围与家数，挑好饭馆、配好一桌菜、算清团购");
     await recordHold(2200);
 
-    // 2. 通过快捷试玩下拉选单填入场景
-    await setCaption("步骤 1：下拉选定快捷场景或自定义地点、搜索范围、筛选家数（1-10家）与忌口");
-    await cdp.eval(`(() => {
-      const sel = document.getElementById("presetSelect");
-      sel.value = "hz";
-      sel.dispatchEvent(new Event("change"));
-    })()`);
-    await recordHold(1600);
+    // 2. 真实点击打开精致自定义下拉菜单并选中快捷场景
+    await setCaption("步骤 1：统一自定义下拉选单，轻松设置地点、搜索范围、甄选餐厅（1-10家）与预算");
+    await cdp.eval(`document.querySelector('#presetSelect + .ui-select-trigger')?.click()`);
+    await recordHold(1000);
+    await cdp.eval(`document.querySelector('.picker-option[data-opt-value="hz"]')?.click()`);
+    await recordHold(1200);
 
     // 3. 点击查询
     await setCaption("步骤 2：实时筛选指定范围内高分饭馆，并按 4 人配好不浪费的一整桌菜");
@@ -312,6 +312,13 @@ async function main() {
       mobileVisible: getComputedStyle(document.getElementById("compareMobileList")).display
     })`);
     await savePng("screen_mobile.png");
+    // 顺手测试手机端精致底部抽屉下拉弹窗
+    await cdp.eval(`window.scrollTo(0, 0)`);
+    await sleep(250);
+    await cdp.eval(`document.querySelector('#sceneSelect + .ui-select-trigger')?.click()`);
+    await sleep(300);
+    await savePng("screen_mobile_picker.png");
+    await cdp.eval(`document.getElementById("pickerCloseBtn")?.click()`);
     console.log("MOBILE_CHECK:", JSON.stringify(overflowInfo));
     if (overflowInfo.scrollW > overflowInfo.clientW + 1) {
       throw new Error(`手机端仍有横向溢出：scrollWidth=${overflowInfo.scrollW} > clientWidth=${overflowInfo.clientW}`);

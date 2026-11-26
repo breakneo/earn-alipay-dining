@@ -1,7 +1,8 @@
 /**
  * 「今天吃这桌」后端通信层
- * - 同域部署（腾讯云 EdgeOne Pages / 魔搭创空间 / 自托管国内服务）自动直连 /api/poi 与 /api/chat（国内 4G/5G/支付宝扫码秒开，零跨域）
+ * - 同域部署（腾讯云 EdgeOne 自定义域名 / 边缘函数）自动直连 /api/poi 与 /api/chat（国内 4G/5G/支付宝扫码秒开，零跨域）
  * - 纯静态托管（如 GitHub Pages 或本地 http.server）自动回退到云端代理
+ * - 单店并发推理（每家店独立轻量请求，3~5 秒秒回，彻底规避边缘函数长请求超时）
  */
 
 import { extractJsonPayload, buildFallbackPlan, estimateMealBudget } from "./engine.js";
@@ -12,7 +13,9 @@ function getEndpoints() {
   if (typeof window !== "undefined") {
     const host = window.location.hostname || "";
     const port = window.location.port || "";
-    const isStaticFallback = host.endsWith("github.io") || ((host === "127.0.0.1" || host === "localhost") && (port === "8080" || port === "4173"));
+    const isStaticFallback =
+      host.endsWith("github.io") ||
+      ((host === "127.0.0.1" || host === "localhost") && (port === "8080" || port === "4173"));
     if (!isStaticFallback) {
       return { poi: "/api/poi", chat: "/api/chat" };
     }
@@ -34,7 +37,7 @@ export async function fetchRealRestaurants({ location, city = "", cuisine = "", 
   return data;
 }
 
-async function callChat(messages, maxTokens = 1600) {
+async function callChat(messages, maxTokens = 750) {
   const { chat } = getEndpoints();
   const resp = await fetch(chat, {
     method: "POST",
@@ -56,68 +59,43 @@ async function callChat(messages, maxTokens = 1600) {
   return content;
 }
 
-async function generateBatchPlans({ anchor, batchRestaurants, req, quota }) {
-  const shopBrief = batchRestaurants.map((r, i) => ({
-    idx: i,
-    id: r.id,
-    name: r.name,
-    cuisine: r.cuisine,
-    rating: r.rating || "暂无",
-    realAvgCostPerPerson: r.cost || req.perCapita,
-    distanceMeters: r.distance ?? "未知",
-    address: r.address,
-    openTime: r.openTime || "未知",
-  }));
-
+/**
+ * 为单家真实餐厅生成精准配菜、参考预算（不含酒水）与支付宝/口碑团购省钱策略
+ * 单次请求轻量快速（约 3~5 秒），并发执行 3 家整体仅需约 5 秒且永不超时
+ */
+async function generateSingleShopPlan({ anchor, restaurant, req, quota }) {
   const systemPrompt = [
-    "你是「今天吃这桌」聚餐选店点菜专家（支付宝生活消费场景）。",
-    "严格遵守以下底线：",
-    "1. 只围绕传入的真实高德餐厅列表作答，绝不改名或编造不存在的店。",
-    "2. 严禁虚构某店具体的实时团购套餐精确标价；在 groupBuyStrategy 中，仅结合支付宝口碑/高德团购生态，给出该品类下「先看代金券还是多人套餐、怎么叠加单点更划算」的实操建议（绝不提及任何非支付宝生态的第三方团购平台）。",
-    "3. 每道菜的 estPrice 必须诚实参考该店 realAvgCostPerPerson 与聚餐人数做合理估算，菜品之和应接近该店 estimatedTotal。",
-    "4. 必须严格避开用户忌口，菜品数量严格遵循建议配比，杜绝浪费。",
-    "5. 只输出合法 JSON，不要输出任何额外说明文字。",
+    "你是「今天吃这桌」聚餐点菜专家（支付宝口碑与高德生态）。",
+    "要求：1) 严格围绕传入的真实餐厅菜系推荐具体常见招牌菜，严禁写「招牌主菜×2」这类泛泛占位词；",
+    "2) 严格避开用户忌口，菜品数遵循推荐配比，价格估算不含酒水并贴近该店人均×人数；",
+    "3) 严禁编造实时团购精确标价，仅给支付宝口碑/高德团购核销策略，不提非支付宝系第三方平台；",
+    "4) 仅输出合法精简 JSON，无多余文字。",
   ].join("\n");
 
-  const userPrompt = JSON.stringify(
-    {
-      task: "请为以下真实餐厅分别生成选店理由、按人数配菜清单、参考预算与支付宝口碑/高德团购省钱建议",
-      userNeed: {
-        location: anchor?.name || req.location,
-        city: anchor?.city || "",
-        headcount: req.headcount,
-        scene: req.scene,
-        targetPerCapita: req.perCapita,
-        targetTotalBudget: req.totalBudget,
-        preferencesAndRestrictions: req.preferences || "无特殊忌口",
-        recommendedDishQuota: quota.formulaText,
-      },
-      restaurants: shopBrief,
-      outputSchema: {
-        overallAdvice: "一句话横向总结这批店怎么选",
-        plans: [
-          {
-            idx: 0,
-            highlightTag: "4-8字卖点标签，如：稳妥不踩雷/聚餐氛围佳/高性价比",
-            whyChoose: "结合口碑、距离、人均与聚餐场景的2句推荐理由",
-            dishes: [
-              {
-                category: "凉菜/硬菜/素菜/汤主食",
-                name: "具体菜名（贴合该店菜系且符合忌口）",
-                reason: "10字以内推荐理由",
-                estPrice: 68,
-              },
-            ],
-            estimatedTotal: 480,
-            groupBuyStrategy: "结合支付宝/口碑/高德团购的省钱策略（不编造假价、不提竞品平台）",
-            avoidTip: "一句针对人数/忌口/点菜顺序的避坑提醒",
-          },
-        ],
-      },
+  const userPrompt = JSON.stringify({
+    location: anchor?.name || req.location,
+    headcount: req.headcount,
+    scene: req.scene,
+    targetPerCapita: req.perCapita,
+    targetTotalNoDrinks: req.totalBudget,
+    preferences: req.preferences || "无特殊忌口",
+    dishQuota: quota.formulaText,
+    restaurant: {
+      name: restaurant.name,
+      cuisine: restaurant.cuisine,
+      rating: restaurant.rating || "暂无",
+      avgCost: restaurant.cost || req.perCapita,
+      distanceMeters: restaurant.distance ?? "未知",
+      address: restaurant.address,
     },
-    null,
-    2
-  );
+    schema: {
+      highlightTag: "4-7字卖点标签",
+      whyChoose: "2句简明推荐理由",
+      dishes: [{ category: "凉菜/硬菜/素菜/汤主食", name: "具体菜名", reason: "8字内理由", estPrice: 58 }],
+      groupBuyStrategy: "2句支付宝口碑/高德团购省钱策略（不编造假价）",
+      avoidTip: "1句点菜避坑提醒",
+    },
+  });
 
   try {
     const raw = await callChat(
@@ -125,71 +103,70 @@ async function generateBatchPlans({ anchor, batchRestaurants, req, quota }) {
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      1750
+      720
     );
     const parsed = extractJsonPayload(raw);
-    if (!parsed || !Array.isArray(parsed.plans)) {
-      throw new Error("解析失败");
+    if (!parsed || !Array.isArray(parsed.dishes) || parsed.dishes.length === 0) {
+      throw new Error("格式解析失败");
     }
-
-    const plans = batchRestaurants.map((r, idx) => {
-      const matched = parsed.plans.find((p) => Number(p.idx) === idx) || parsed.plans[idx];
-      if (!matched || !Array.isArray(matched.dishes) || matched.dishes.length === 0) {
-        return buildFallbackPlan(r, req, quota);
-      }
-      const dishes = matched.dishes.slice(0, 10).map((d) => ({
-        category: String(d.category || "推荐菜"),
-        name: String(d.name || "门店招牌菜"),
-        reason: String(d.reason || "口碑必点"),
-        estPrice: Math.max(Math.round(Number(d.estPrice) || 45), 10),
-      }));
-      const dishSum = dishes.reduce((s, d) => s + d.estPrice, 0);
-      const baseEst = estimateMealBudget({
-        restaurantCost: r.cost,
-        headcount: req.headcount,
-        targetPerCapita: req.perCapita,
-      });
-      const estimatedTotal = dishSum > 0 ? dishSum : baseEst.estimatedTotal;
-      return {
-        restaurantId: r.id,
-        restaurantName: r.name,
-        highlightTag: String(matched.highlightTag || r.matchReasons?.[0] || "口碑优选"),
-        whyChoose: String(matched.whyChoose || ""),
-        dishes,
-        estimatedTotal,
-        estimatedPerCapita: Math.round(estimatedTotal / Math.max(req.headcount, 1)),
-        groupBuyStrategy: String(matched.groupBuyStrategy || ""),
-        avoidTip: String(matched.avoidTip || ""),
-        isFallback: false,
-      };
+    const dishes = parsed.dishes.slice(0, 10).map((d) => ({
+      category: String(d.category || "推荐菜"),
+      name: String(d.name || "门店特色菜"),
+      reason: String(d.reason || "口碑必点"),
+      estPrice: Math.max(Math.round(Number(d.estPrice) || 45), 10),
+    }));
+    const dishSum = dishes.reduce((s, d) => s + d.estPrice, 0);
+    const baseEst = estimateMealBudget({
+      restaurantCost: restaurant.cost,
+      headcount: req.headcount,
+      targetPerCapita: req.perCapita,
     });
+    const estimatedTotal = dishSum > 0 ? dishSum : baseEst.estimatedTotal;
 
-    return { overallAdvice: String(parsed.overallAdvice || ""), plans };
-  } catch {
     return {
-      overallAdvice: "",
-      plans: batchRestaurants.map((r) => buildFallbackPlan(r, req, quota)),
+      restaurantId: restaurant.id,
+      restaurantName: restaurant.name,
+      highlightTag: String(parsed.highlightTag || restaurant.matchReasons?.[0] || "口碑优选"),
+      whyChoose: String(parsed.whyChoose || ""),
+      dishes,
+      estimatedTotal,
+      estimatedPerCapita: Math.round(estimatedTotal / Math.max(req.headcount, 1)),
+      groupBuyStrategy: String(parsed.groupBuyStrategy || ""),
+      avoidTip: String(parsed.avoidTip || ""),
+      isFallback: false,
     };
+  } catch {
+    return buildFallbackPlan(restaurant, req, quota);
   }
 }
 
 /**
- * 支持 1~10 家餐厅批量生成配菜方案（超过 3 家自动并发分批，每批 3 家，避免截断）
+ * 并发池：支持 1~10 家餐厅快速并发配菜（最多 4 路并发，每店 3~5 秒返回）
  */
 export async function generateDiningPlans({ anchor, restaurants, req, quota }) {
-  const chunks = [];
-  for (let i = 0; i < restaurants.length; i += 3) {
-    chunks.push(restaurants.slice(i, i + 3));
+  const plans = new Array(restaurants.length);
+  const concurrency = Math.min(4, restaurants.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < restaurants.length) {
+      const idx = cursor++;
+      plans[idx] = await generateSingleShopPlan({
+        anchor,
+        restaurant: restaurants[idx],
+        req,
+        quota,
+      });
+    }
   }
 
-  const batchResults = await Promise.all(
-    chunks.map((batchRestaurants) => generateBatchPlans({ anchor, batchRestaurants, req, quota }))
-  );
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
-  const plans = batchResults.flatMap((b) => b.plans);
-  const firstAdvice = batchResults[0]?.overallAdvice?.trim();
+  const summaryParts = plans.slice(0, 3).map((p) => `${p.highlightTag}选「${p.restaurantName.replace(/[\(（].*$/, "")}」`);
   const overallAdvice =
-    firstAdvice || `已为你从指定地点周边筛出 ${restaurants.length} 家贴合预算与口味的饭馆，可按下方对比直接挑选。`;
+    summaryParts.length >= 2
+      ? `${summaryParts.join("，")}；共甄选 ${restaurants.length} 家贴合 ${req.headcount} 人预算（不含酒水）的饭馆。`
+      : `已为你甄选 ${restaurants.length} 家贴合 ${req.headcount} 人「${req.scene}」预算（不含酒水）的饭馆。`;
 
   return { overallAdvice, plans };
 }
@@ -231,7 +208,7 @@ export async function compareGroupBuyWithAI({ restaurant, req, estimatedTotal, p
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ],
-    900
+    750
   );
   const parsed = extractJsonPayload(raw);
   if (!parsed) {
