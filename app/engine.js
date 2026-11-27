@@ -592,22 +592,6 @@ function pickCleanDishes(list, count, avoidSeafood, avoidSpicy) {
   return source.slice(0, count);
 }
 
-/**
- * 清理菜名中带括号或份数后缀，便于精准检索菜品图片
- */
-export function buildDishImageUrl(dishName = "", size = "thumb") {
-  const clean = String(dishName || "")
-    .replace(/[(（\[【].*?[)）\]】]/g, "")
-    .replace(/[×xX]\d+.*$/, "")
-    .replace(/配.*$/, "")
-    .trim();
-  const q = encodeURIComponent(`${clean || "中餐美食"} ${size === "large" ? "美食 实拍" : "菜品"}`);
-  if (size === "large") {
-    return `https://cn.bing.com/th?q=${q}&w=560&h=400&c=7&rs=1&p=0`;
-  }
-  return `https://cn.bing.com/th?q=${q}&w=140&h=140&c=7&rs=1&p=0`;
-}
-
 export function buildFallbackPlan(restaurant, req, quota) {
   const est = estimateMealBudget({
     restaurantCost: restaurant.cost,
@@ -640,7 +624,7 @@ export function buildFallbackPlan(restaurant, req, quota) {
   const takeUnique = (list, count) => {
     const picked = [];
     for (const name of pickCleanDishes(list, list.length, avoidSeafood, avoidSpicy)) {
-      const key = name.replace(/[(（\[【].*?[)）\]】]/g, "").trim();
+      const key = name.replace(/[(（[【].*?[)）\]】]/g, "").trim();
       if (usedNames.has(key)) continue;
       // 避免“糖醋小排”和“糖醋排骨”这类高度近义菜同时出现
       if ([...usedNames].some((u) => (u.length >= 2 && key.includes(u.slice(0, 2))) || (key.length >= 2 && u.includes(key.slice(0, 2))))) {

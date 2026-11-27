@@ -12,15 +12,14 @@ import {
   buildAlipaySearchScheme,
   buildInviteText,
   buildIcsCalendar,
-  buildDishImageUrl,
-} from "./engine.js?v=20261127f";
+} from "./engine.js?v=20261127g";
 import {
   fetchRealRestaurants,
   generateDiningPlans,
   generateSingleShopPlan,
   compareGroupBuyWithAI,
   buildOverallAdvice,
-} from "./api.js?v=20261127f";
+} from "./api.js?v=20261127g";
 
 const PRESETS = {
   hz: { loc: "杭州黄龙万科中心", radius: "2000", count: "3", people: "4", mode: "per_capita", budget: "120", scene: "朋友小聚", pref: "不吃辣" },
@@ -88,12 +87,6 @@ const els = {
   pickerSheetTitle: document.getElementById("pickerSheetTitle"),
   pickerCloseBtn: document.getElementById("pickerCloseBtn"),
   pickerOptions: document.getElementById("pickerOptions"),
-  dishLightbox: document.getElementById("dishLightbox"),
-  dishLightboxClose: document.getElementById("dishLightboxClose"),
-  dishLightboxImg: document.getElementById("dishLightboxImg"),
-  dishLightboxTitle: document.getElementById("dishLightboxTitle"),
-  dishLightboxPrice: document.getElementById("dishLightboxPrice"),
-  dishLightboxReason: document.getElementById("dishLightboxReason"),
   backToTopBtn: document.getElementById("backToTopBtn"),
   toast: document.getElementById("toast"),
 };
@@ -439,13 +432,9 @@ function buildPlanBodyHtml(shop, plan) {
   const { estTotal, estPer } = getShopEstimate(shop, plan);
   const basisCost = shop.cost ? Math.round(shop.cost) : state.req.perCapita;
   const dishRows = (plan.dishes || [])
-    .map((d) => {
-      const thumbUrl = buildDishImageUrl(d.name, "thumb");
-      return `
-      <li class="dish-item dish-item-clickable" role="button" tabindex="0" data-dish-name="${escapeHtml(d.name)}" data-dish-cat="${escapeHtml(d.category)}" data-dish-reason="${escapeHtml(d.reason)}" data-dish-price="约¥${d.estPrice}" title="点击查看菜品大图">
-        <div class="dish-thumb-wrap">
-          <img class="dish-thumb" src="${thumbUrl}" alt="${escapeHtml(d.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.classList.add('is-broken')" />
-        </div>
+    .map(
+      (d) => `
+      <li class="dish-item">
         <div class="dish-main">
           <div>
             <span class="dish-cat">${escapeHtml(d.category)}</span>
@@ -455,8 +444,8 @@ function buildPlanBodyHtml(shop, plan) {
         </div>
         <span class="dish-price">约¥${d.estPrice}</span>
       </li>
-    `;
-    })
+    `
+    )
     .join("");
 
   return `
@@ -466,7 +455,7 @@ function buildPlanBodyHtml(shop, plan) {
       <div>
         <div class="block-title">
           <span>按 ${state.req.headcount} 人配好这一桌</span>
-          <span style="font-size:11px;font-weight:400;color:#8c8378;">点菜名看大图 · 不含酒水</span>
+          <span style="font-size:11px;font-weight:400;color:#8c8378;">不含酒水 · 供参考</span>
         </div>
         <p class="price-basis-note">单价按该店参考人均 ¥${basisCost} 与菜品品类估算，实际以门店当日菜单为准</p>
         <ul class="dish-list">${dishRows}</ul>
@@ -801,21 +790,6 @@ async function handleSearchSubmit(evt) {
   }
 }
 
-function openDishLightbox({ name, cat, reason, price }) {
-  if (!els.dishLightbox) return;
-  els.dishLightboxImg.classList.remove("is-broken");
-  els.dishLightboxImg.src = buildDishImageUrl(name, "large");
-  els.dishLightboxImg.alt = name;
-  els.dishLightboxTitle.textContent = `${cat ? `[${cat}] ` : ""}${name}`;
-  els.dishLightboxPrice.textContent = price || "";
-  els.dishLightboxReason.textContent = reason ? `推荐理由：${reason}` : "";
-  els.dishLightbox.classList.remove("hidden");
-}
-
-function closeDishLightbox() {
-  els.dishLightbox?.classList.add("hidden");
-}
-
 function initBackToTop() {
   if (!els.backToTopBtn) return;
   const sync = () => {
@@ -884,17 +858,6 @@ function initEvents() {
   els.compareMobileList.addEventListener("click", handleScrollToCard);
 
   els.cardsGrid.addEventListener("click", (e) => {
-    const dishEl = e.target.closest("[data-dish-name]");
-    if (dishEl) {
-      openDishLightbox({
-        name: dishEl.dataset.dishName || "",
-        cat: dishEl.dataset.dishCat || "",
-        reason: dishEl.dataset.dishReason || "",
-        price: dishEl.dataset.dishPrice || "",
-      });
-      return;
-    }
-
     const abaoBtn = e.target.closest("[data-abao-idx]");
     if (abaoBtn) {
       const idx = Number(abaoBtn.dataset.abaoIdx);
@@ -962,14 +925,6 @@ function initEvents() {
     a.click();
     URL.revokeObjectURL(url);
     showToast("已导出 .ics 日历提醒文件");
-  });
-
-  els.dishLightboxClose?.addEventListener("click", closeDishLightbox);
-  els.dishLightbox?.addEventListener("click", (e) => {
-    if (e.target === els.dishLightbox) closeDishLightbox();
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeDishLightbox();
   });
 
   [els.aaTotalInput, els.aaPeopleInput, els.aaDrinkInput, els.aaDrinkersInput].forEach((el) => {

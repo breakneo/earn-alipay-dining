@@ -17,7 +17,6 @@ import {
   buildIcsCalendar,
   extractJsonPayload,
   buildFallbackPlan,
-  buildDishImageUrl,
 } from "../app/engine.js";
 import { formatFriendlyNetworkError, generateDiningPlans } from "../app/api.js";
 
@@ -364,7 +363,7 @@ test("单位聚餐/高预算场景严禁混入咖啡厅/哈根达斯/酒店本�
   assert.ok(!top3.includes("GIADA Garden"), "严重超预算(¥1401/¥175)的店不应排进前3");
 });
 
-test("兜底菜单全部为具体独立菜名（零泛称/零×2合并价），并能生成规范菜品图链接", () => {
+test("兜底菜单全部为具体独立菜名（零泛称/零×2合并价/零重复菜名）", () => {
   const shop = {
     id: "sh1",
     name: "逸品淮扬(白玉兰店)",
@@ -379,12 +378,11 @@ test("兜底菜单全部为具体独立菜名（零泛称/零×2合并价），�
   const quota = computeDishQuota(6, "商务宴请");
   const fb = buildFallbackPlan(shop, req, quota);
   assert.ok(fb.dishes.length >= 6);
+  const seenNames = new Set();
   for (const d of fb.dishes) {
     assert.ok(!/爽口凉菜|招牌主菜|当季时蔬|例汤或特色主食|×\d|门店招牌/.test(d.name), `不应出现模糊占位菜名：${d.name}`);
     assert.ok(d.estPrice >= 20 && d.estPrice <= 350, `单道菜价应合理：${d.name} ¥${d.estPrice}`);
+    assert.ok(!seenNames.has(d.name), `兜底菜单不应重复出现同道菜：${d.name}`);
+    seenNames.add(d.name);
   }
-  const thumb = buildDishImageUrl("龙井虾仁（招牌）", "thumb");
-  const large = buildDishImageUrl("清蒸大闸蟹(公蟹四两×3)", "large");
-  assert.ok(thumb.startsWith("https://cn.bing.com/th?q=") && thumb.includes("w=140"));
-  assert.ok(large.startsWith("https://cn.bing.com/th?q=") && large.includes("w=560"));
 });
