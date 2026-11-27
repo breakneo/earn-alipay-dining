@@ -196,7 +196,7 @@ export async function generateSingleShopPlan({ anchor, restaurant, req, quota, s
       cuisine: restaurant.cuisine,
       rating: restaurant.rating || "暂无",
       cost: restaurant.cost || req.perCapita,
-      distM: restaurant.distance ?? "未知",
+      distanceText: restaurant.distance != null ? `${restaurant.distance}米` : "未知",
       tags: (restaurant.tag || "").slice(0, 60),
     },
     schema: {
@@ -262,7 +262,7 @@ export async function generateSingleShopPlan({ anchor, restaurant, req, quota, s
 export function buildOverallAdvice(plans, restaurants, req) {
   const ready = plans.filter(Boolean);
   const summaryParts = ready.slice(0, 3).map((p) => {
-    const cleanName = p.restaurantName.replace(/[\(（].*$/, "");
+    const cleanName = p.restaurantName.replace(/[(（].*$/, "");
     const tag = String(p.highlightTag || "品质优选").trim();
     return tag.endsWith("选") ? `${tag}「${cleanName}」` : `${tag}选「${cleanName}」`;
   });
