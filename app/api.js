@@ -178,7 +178,7 @@ export async function generateSingleShopPlan({ anchor, restaurant, req, quota, s
   const systemPrompt = [
     "你是「今天吃这桌」聚餐点菜专家（支付宝口碑与高德生态）。",
     "要求：1) 围绕传入的真实餐厅与特色标签推荐具体常见招牌菜，严禁写「招牌主菜×2」这类泛泛占位词；",
-    "2) 严格避开用户忌口，总菜数控制在目标数量内，单价估算不含酒水并贴近人均×人数；",
+    "2) 严格避开用户忌口，总菜数控制在目标数量内，整桌估算总价（不含酒水）应贴合该店真实人均×人数（约在目标总预算的 75%~102% 档位），体现对应预算应有的品质硬菜；",
     "3) 严禁编造团购精确假价，仅给支付宝口碑/高德核销策略，不提非支付宝系第三方平台；",
     "4) 仅输出合法紧凑 JSON，无多余说明。",
   ].join("\n");
@@ -257,13 +257,15 @@ export async function generateSingleShopPlan({ anchor, restaurant, req, quota, s
 
 export function buildOverallAdvice(plans, restaurants, req) {
   const ready = plans.filter(Boolean);
-  const summaryParts = ready
-    .slice(0, 3)
-    .map((p) => `${p.highlightTag}选「${p.restaurantName.replace(/[\(（].*$/, "")}」`);
+  const summaryParts = ready.slice(0, 3).map((p) => {
+    const cleanName = p.restaurantName.replace(/[\(（].*$/, "");
+    const tag = String(p.highlightTag || "品质优选").trim();
+    return tag.endsWith("选") ? `${tag}「${cleanName}」` : `${tag}选「${cleanName}」`;
+  });
   if (summaryParts.length >= 2) {
-    return `${summaryParts.join("，")}；共甄选 ${restaurants.length} 家贴合 ${req.headcount} 人预算（不含酒水）的饭馆。`;
+    return `${summaryParts.join("，")}；共甄选 ${restaurants.length} 家贴合 ${req.headcount} 人预算（不含酒水）的正餐饭馆。`;
   }
-  return `已为你甄选 ${restaurants.length} 家贴合 ${req.headcount} 人「${req.scene}」预算（不含酒水）的饭馆。`;
+  return `已为你甄选 ${restaurants.length} 家贴合 ${req.headcount} 人「${req.scene}」预算（不含酒水）的正餐饭馆。`;
 }
 
 /**

@@ -1,16 +1,22 @@
 /**
- * 腾讯云 EdgeOne Pages 边缘函数：GET/POST/OPTIONS /api/poi（高德开放平台实时餐饮 POI 查询）
- * 环境变量：AMAP_API_KEY（在 EdgeOne Pages 控制台加密配置，绝不落代码仓）
+ * 腾讯云 EdgeOne Pages 边缘函数：GET/POST/OPTIONS /api/poi（高德开放平台实时正餐 POI 查询）
+ * - 严格限定 types=050100|050200（中餐厅 + 外国餐厅），源头过滤咖啡厅/甜品店/哈根达斯/糕饼/快餐/茶饮
+ * - 并行拉取第 1~2 页（最多 40~50 家真实正餐馆），保障选 10 家与高预算品质筛选均有充足候选池
+ * - 环境变量：AMAP_API_KEY（在 EdgeOne Pages 控制台加密配置，绝不落代码仓）
  */
 
 const AMAP_BASE = "https://restapi.amap.com/v3";
 const UPSTREAM_TIMEOUT_MS = 6500;
+const SITDOWN_DINING_TYPES = "050100|050200";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
+
+const HARD_EXCLUDE_RE =
+  /咖啡|coffee|cafe|星巴克|皮爷|瑞幸|manner|arabica|bacha|甜品|甜点|哈根达斯|häagen|haagen|godiva|歌帝梵|巧克力|冰淇淋|冰激凌|糕饼|面包|烘焙|bakery|蛋糕|奶茶|冷饮|茶饮|果茶|喜茶|奈雪|霸王茶姬|茶艺馆|茶馆|茶楼|茶室|便利店|零食|赛百味|肯德基|麦当劳|汉堡王|炸鸡|快餐厅|harbor\s*house/i;
 
 function jsonResp(data, status = 200, cacheControl = "no-store") {
   return new Response(JSON.stringify(data), {
@@ -59,8 +65,9 @@ async function fetchJsonWithTimeout(url, timeoutMs = UPSTREAM_TIMEOUT_MS) {
 function normalizePoi(p) {
   const biz = p.biz_ext || {};
   const rawType = asStr(p.type);
-  const typeParts = rawType.split(";").map((s) => s.trim()).filter(Boolean);
-  const cuisine = typeParts[2] || typeParts[1] || "综合餐饮";
+  const firstSegment = rawType.split("|")[0] || rawType;
+  const typeParts = firstSegment.split(";").map((s) => s.trim()).filter(Boolean);
+  const cuisine = typeParts[2] || typeParts[1] || "中餐厅";
   const rawTag = asStr(p.tag);
   return {
     id: asStr(p.id),
@@ -77,6 +84,19 @@ function normalizePoi(p) {
     tag: rawTag.length > 80 ? rawTag.slice(0, 80) : rawTag,
     openTime: asStr(biz.open_time) || asStr(biz.opentime2) || "",
   };
+}
+
+function isRealSitdownPoi(poi) {
+  if (!poi?.name) return false;
+  // 排除主类目为酒店住宿/购物服装的复合条目
+  if (/^(住宿服务|购物服务|生活服务|风景名胜|商务住宅)/.test(poi.rawType || "")) {
+    return false;
+  }
+  const combined = `${poi.name} ${poi.cuisine} ${poi.rawType}`;
+  if (HARD_EXCLUDE_RE.test(combined)) {
+    return false;
+  }
+  return true;
 }
 
 async function resolveAnchor(locationText, city, amapKey) {
@@ -115,15 +135,15 @@ async function resolveAnchor(locationText, city, amapKey) {
   return null;
 }
 
-async function searchNearbyRestaurants(anchorLoc, cuisine, radius, amapKey) {
+async function searchNearbyPage(anchorLoc, cuisine, radius, amapKey, page = 1) {
   const params = new URLSearchParams({
     key: amapKey,
     location: anchorLoc,
-    types: "050000",
+    types: SITDOWN_DINING_TYPES,
     radius: String(Math.min(Math.max(Number(radius) || 2000, 300), 5000)),
     sortrule: "weight",
     offset: "25",
-    page: "1",
+    page: String(page),
     extensions: "all",
   });
   if (cuisine && cuisine !== "不限") {
@@ -133,7 +153,31 @@ async function searchNearbyRestaurants(anchorLoc, cuisine, radius, amapKey) {
   if (data.status !== "1") {
     throw new Error(`地图查询异常：${data.info || data.infocode || "unknown"}`);
   }
-  return Array.isArray(data.pois) ? data.pois.map(normalizePoi).filter((p) => p.name) : [];
+  return Array.isArray(data.pois) ? data.pois.map(normalizePoi).filter(isRealSitdownPoi) : [];
+}
+
+async function searchNearbyRestaurants(anchorLoc, cuisine, radius, amapKey) {
+  // 并行拉取第 1、2 页正餐馆，不增加耗时但将候选品质正餐池扩大一倍（最多 ~45 家）
+  const results = await Promise.allSettled([
+    searchNearbyPage(anchorLoc, cuisine, radius, amapKey, 1),
+    searchNearbyPage(anchorLoc, cuisine, radius, amapKey, 2),
+  ]);
+  const merged = [];
+  const seen = new Set();
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue;
+    for (const item of r.value) {
+      const key = item.id || item.name;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(item);
+      }
+    }
+  }
+  if (merged.length === 0 && results[0]?.status === "rejected") {
+    throw results[0].reason;
+  }
+  return merged;
 }
 
 async function handlePoiQuery(params, env, allowCache = false) {
@@ -159,14 +203,15 @@ async function handlePoiQuery(params, env, allowCache = false) {
   }
 
   let pois = await searchNearbyRestaurants(anchor.location, cuisine, radius, amapKey);
-  const minNeeded = Math.min(requestedCount + 4, 14);
+  const minNeeded = Math.min(requestedCount + 6, 18);
   if (pois.length < minNeeded && cuisine && cuisine !== "不限") {
     const broader = await searchNearbyRestaurants(anchor.location, "", radius, amapKey);
-    const seen = new Set(pois.map((p) => p.id));
+    const seen = new Set(pois.map((p) => p.id || p.name));
     for (const item of broader) {
-      if (!seen.has(item.id)) {
+      const key = item.id || item.name;
+      if (!seen.has(key)) {
         pois.push(item);
-        seen.add(item.id);
+        seen.add(key);
       }
     }
   }
@@ -175,7 +220,7 @@ async function handlePoiQuery(params, env, allowCache = false) {
     {
       anchor,
       total: pois.length,
-      restaurants: pois.slice(0, 25),
+      restaurants: pois.slice(0, 40),
     },
     200,
     allowCache ? "public, max-age=120" : "no-store"

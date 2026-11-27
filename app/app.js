@@ -12,14 +12,14 @@ import {
   buildAlipaySearchScheme,
   buildInviteText,
   buildIcsCalendar,
-} from "./engine.js";
+} from "./engine.js?v=20261127e";
 import {
   fetchRealRestaurants,
   generateDiningPlans,
   generateSingleShopPlan,
   compareGroupBuyWithAI,
   buildOverallAdvice,
-} from "./api.js?v=20261127c";
+} from "./api.js?v=20261127e";
 
 const PRESETS = {
   hz: { loc: "杭州黄龙万科中心", radius: "2000", count: "3", people: "4", mode: "per_capita", budget: "120", scene: "朋友小聚", pref: "不吃辣" },

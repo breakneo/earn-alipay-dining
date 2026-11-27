@@ -6,23 +6,68 @@ const NON_DINING_KEYWORDS = [
   "奶茶",
   "冷饮",
   "咖啡",
+  "coffee",
+  "cafe",
+  "星巴克",
+  "皮爷",
+  "瑞幸",
+  "manner",
+  "arabica",
+  "bacha",
   "甜品",
+  "甜点",
+  "哈根达斯",
+  "haagen",
+  "häagen",
+  "godiva",
+  "歌帝梵",
+  "巧克力",
   "糕饼",
   "面包",
+  "烘焙",
+  "bakery",
   "蛋糕",
   "饮品",
   "茶饮",
+  "果茶",
   "果汁",
+  "喜茶",
+  "奈雪",
+  "霸王茶姬",
   "便利店",
   "零食",
   "冰激凌",
   "冰淇淋",
+  "茶艺馆",
   "茶馆",
   "茶楼",
   "茶室",
+  "harbor house",
 ];
 
-const FAST_FOOD_KEYWORDS = ["快餐", "便当", "汉堡", "炸鸡", "沙县", "兰州拉面", "黄焖鸡", "小吃", "粉面"];
+const FAST_FOOD_KEYWORDS = [
+  "快餐",
+  "便当",
+  "汉堡",
+  "炸鸡",
+  "赛百味",
+  "肯德基",
+  "麦当劳",
+  "沙县",
+  "兰州拉面",
+  "黄焖鸡",
+  "小吃",
+  "早点",
+  "粉面",
+  "馄饨",
+  "粥道",
+  "紫菜卷",
+  "帕尼尼",
+  "麻辣烫",
+  "米线",
+  "简餐",
+  "轻食",
+];
 const SPICY_KEYWORDS = ["川菜", "湘菜", "重庆", "麻辣", "冒菜", "串串", "水煮鱼", "酸菜鱼", "毛血旺", "烤鱼", "辣"];
 
 export function normalizeBudget({ headcount = 4, budgetMode = "per_capita", budgetValue = 120 } = {}) {
@@ -117,78 +162,103 @@ function getBrandKey(name = "") {
 }
 
 function isNonDiningPoi(poi, prefText) {
-  const text = `${poi.name || ""} ${poi.cuisine || ""} ${poi.rawType || ""}`;
-  return NON_DINING_KEYWORDS.some((kw) => text.includes(kw) && !prefText.includes(kw));
+  const rawType = String(poi.rawType || "");
+  if (/^(住宿服务|购物服务|生活服务|风景名胜|商务住宅)/.test(rawType)) {
+    return true;
+  }
+  const text = `${poi.name || ""} ${poi.cuisine || ""} ${rawType}`.toLowerCase();
+  const pref = String(prefText || "").toLowerCase();
+  return NON_DINING_KEYWORDS.some((kw) => text.includes(kw) && !pref.includes(kw));
 }
 
 function isFastFoodPoi(poi, prefText) {
-  const text = `${poi.name || ""} ${poi.cuisine || ""} ${poi.rawType || ""}`;
-  return FAST_FOOD_KEYWORDS.some((kw) => text.includes(kw) && !prefText.includes(kw));
+  const text = `${poi.name || ""} ${poi.cuisine || ""} ${poi.rawType || ""}`.toLowerCase();
+  const pref = String(prefText || "").toLowerCase();
+  return FAST_FOOD_KEYWORDS.some((kw) => text.includes(kw) && !pref.includes(kw));
 }
 
 function scoreRestaurant(poi, { headcount = 4, perCapita = 120, scene = "朋友小聚", preferences = "", radius = 2000 }) {
   const pref = String(preferences || "");
   const fullText = `${poi.name || ""} ${poi.cuisine || ""} ${poi.rawType || ""} ${poi.tag || ""}`;
+  const isFormalScene = scene === "单位聚餐" || scene === "商务宴请";
   let score = 0;
   const reasons = [];
 
-  // 1. 口碑评分（最多 42 分）
+  // 1. 口碑评分（最多 36 分）
   const rating = Number(poi.rating);
   if (Number.isFinite(rating) && rating > 0) {
-    score += Math.min(Math.max((rating - 3.0) / 2.0, 0), 1) * 42;
+    score += Math.min(Math.max((rating - 3.0) / 2.0, 0), 1) * 36;
     if (rating >= 4.5) reasons.push(`口碑 ${rating.toFixed(1)} 分`);
-  } else {
-    score += 22;
-  }
-
-  // 2. 人均与预算匹配度（最多 28 分）
-  const cost = Number(poi.cost);
-  if (Number.isFinite(cost) && cost > 0) {
-    const ratio = cost / Math.max(perCapita, 30);
-    if (ratio >= 0.7 && ratio <= 1.15) {
-      score += 28;
-      reasons.push(`人均 ¥${Math.round(cost)} 贴合预算`);
-    } else if (ratio > 1.15 && ratio <= 1.35) {
-      score += 18;
-      reasons.push(`人均 ¥${Math.round(cost)} 略高于预算`);
-    } else if (ratio < 0.7 && ratio >= 0.45) {
-      score += 20;
-      reasons.push(`人均 ¥${Math.round(cost)} 高性价比`);
-    } else if (ratio > 1.6) {
-      score -= 18;
-    } else {
-      score += 8;
-    }
   } else {
     score += 14;
   }
 
-  // 3. 距离便利度（最多 18 分）
+  // 2. 人均与预算品质档次匹配度（核心权重：最多 42 分）
+  // 真实选店逻辑：优先靠近目标预算上限略低一点（75%~105%），代表对环境与品质的预期；
+  // 明显低于预算一半（<55%）或远超预算（>145%）均强力降权，避免单位聚餐/高预算场景混入廉价简餐
+  const cost = Number(poi.cost);
+  if (Number.isFinite(cost) && cost > 0) {
+    const ratio = cost / Math.max(perCapita, 30);
+    if (ratio >= 0.75 && ratio <= 1.05) {
+      score += 42;
+      reasons.push(`人均 ¥${Math.round(cost)} 品质贴合预算`);
+    } else if (ratio >= 0.65 && ratio < 0.75) {
+      score += 28;
+      reasons.push(`人均 ¥${Math.round(cost)} 稳妥贴合`);
+    } else if (ratio > 1.05 && ratio <= 1.18) {
+      score += 26;
+      reasons.push(`人均 ¥${Math.round(cost)} 品质优选`);
+    } else if (ratio >= 0.55 && ratio < 0.65) {
+      score += isFormalScene ? -4 : 10;
+      if (!isFormalScene) reasons.push(`人均 ¥${Math.round(cost)} 偏实惠`);
+    } else if (ratio < 0.55) {
+      // 不到预算一半：与用户期望的餐厅档次明显错配
+      score -= isFormalScene ? 42 : perCapita >= 80 ? 30 : 14;
+    } else if (ratio > 1.18 && ratio <= 1.38) {
+      score += 4;
+      reasons.push(`人均 ¥${Math.round(cost)} 略高于预算`);
+    } else if (ratio > 1.38 && ratio <= 1.75) {
+      score -= 24;
+    } else {
+      score -= 48;
+    }
+  } else {
+    // 缺失人均参考价：保守小幅加分，不压过已知品质贴合的餐厅
+    score += 4;
+  }
+
+  // 3. 距离便利度（最多 12 分，避免“近但低档”压过“稍远但品质对口”）
   const dist = Number(poi.distance);
   const maxR = normalizeRadius(radius);
   if (Number.isFinite(dist) && dist >= 0) {
-    if (dist <= Math.min(500, maxR * 0.4)) {
-      score += 18;
+    if (dist <= Math.min(600, maxR * 0.4)) {
+      score += 12;
       reasons.push(`距选定地点 ${formatDistance(dist)}`);
     } else if (dist <= maxR * 0.75) {
-      score += 13;
+      score += 9;
       reasons.push(`距选定地点 ${formatDistance(dist)}`);
     } else if (dist <= maxR) {
-      score += 8;
+      score += 5;
     } else {
       score -= 10;
     }
   }
 
-  // 4. 聚餐场景与忌口适配（最多 12 分）
-  if (headcount >= 4 && perCapita >= 65 && isFastFoodPoi(poi, pref)) {
-    score -= 22;
+  // 4. 聚餐场景与忌口适配
+  if ((headcount >= 3 || perCapita >= 70 || isFormalScene) && isFastFoodPoi(poi, pref)) {
+    score -= isFormalScene ? 45 : 28;
   }
-  if ((scene === "单位聚餐" || scene === "商务宴请") && Number.isFinite(cost) && cost < 45) {
+  if (isFormalScene && Number.isFinite(cost) && cost < Math.max(70, perCapita * 0.5)) {
     score -= 18;
   }
+  if ((isFormalScene || pref.includes("包间") || pref.includes("清淡")) && /中餐厅|酒楼|北京菜|广东菜|粤菜|浙江菜|江苏菜|江浙|淮扬|本帮|湖北菜|海鲜/.test(fullText)) {
+    score += 6;
+  }
+  if ((pref.includes("清淡") || pref.includes("少油")) && /烧肉|烤肉|烧烤|炸鸡|麻辣/.test(fullText)) {
+    score -= 10;
+  }
   if ((pref.includes("不吃辣") || pref.includes("清淡") || pref.includes("不辣")) && SPICY_KEYWORDS.some((k) => fullText.includes(k))) {
-    score -= 16;
+    score -= 18;
   }
   const cuisineHints = ["火锅", "粤菜", "广东", "浙江", "杭帮", "江浙", "本帮", "川菜", "湘菜", "日料", "烤肉", "海鲜", "烧烤", "西餐", "泰国", "北京", "东北", "云南", "茶餐厅"];
   for (const h of cuisineHints) {
@@ -207,20 +277,29 @@ function scoreRestaurant(poi, { headcount = 4, perCapita = 120, scene = "朋友�
 }
 
 /**
- * 按用户指定数量（1~10 家）筛选最合适的餐厅，避免同品牌扎堆并保留真实候补池
+ * 按用户指定数量（1~10 家）筛选最合适的正餐馆，严禁咖啡/甜品/快餐混入，避免同品牌扎堆并保留真实候补池
  */
 export function selectTopRestaurants(pois = [], req = {}, limit = 3) {
   const count = normalizeShopCount(limit);
   const pref = String(req.preferences || "");
-  const valid = (pois || []).filter((p) => p && p.name && !isNonDiningPoi(p, pref));
-  const pool = valid.length >= count ? valid : (pois || []).filter((p) => p && p.name);
+  const isFormalScene = req.scene === "单位聚餐" || req.scene === "商务宴请";
+
+  // 铁律：永远严格剔除非正餐（咖啡厅/哈根达斯/甜品/糕饼/奶茶/酒店本体等），绝不因数量不足而放回咖啡甜品店
+  const diningOnly = (pois || []).filter((p) => p && p.name && !isNonDiningPoi(p, pref));
+  // 正式聚餐/高预算优先剔除快餐小吃；仅当正餐馆真的极少时才允许快餐替补，仍绝不放回咖啡甜品
+  const sitdownOnly =
+    isFormalScene || (Number(req.perCapita) || 120) >= 85
+      ? diningOnly.filter((p) => !isFastFoodPoi(p, pref))
+      : diningOnly;
+  const pool = sitdownOnly.length >= Math.min(count, 3) ? sitdownOnly : diningOnly;
 
   const scored = pool.map((p) => scoreRestaurant(p, req)).sort((a, b) => b.matchScore - a.matchScore);
 
   const picked = [];
   const usedBrands = new Set();
   const cuisineCount = new Map();
-  const maxSameCuisine = count <= 3 ? 2 : Math.max(2, Math.ceil(count / 2));
+  const hasExplicitCuisine = /火锅|江浙|杭帮|本帮|粤菜|川菜|湘菜|日料|烤肉|海鲜|西餐|烧烤|泰国|北京菜|东北菜|云南菜|茶餐厅/.test(pref);
+  const maxSameCuisine = hasExplicitCuisine ? count : count <= 3 ? 2 : Math.max(2, Math.ceil(count / 2));
 
   // 第一轮：优先保证品牌不重复 + 品类多样
   for (const item of scored) {
@@ -234,7 +313,7 @@ export function selectTopRestaurants(pois = [], req = {}, limit = 3) {
     cuisineCount.set(cKey, (cuisineCount.get(cKey) || 0) + 1);
   }
 
-  // 第二轮：若不足目标数量则按高分补足
+  // 第二轮：若不足目标数量则按高分补足，最后严格按匹配分降序排列
   if (picked.length < count) {
     const pickedIds = new Set(picked.map((p) => p.id || p.name));
     for (const item of scored) {
@@ -245,6 +324,7 @@ export function selectTopRestaurants(pois = [], req = {}, limit = 3) {
       pickedIds.add(key);
     }
   }
+  picked.sort((a, b) => b.matchScore - a.matchScore);
 
   const finalIds = new Set(picked.map((p) => p.id || p.name));
   const backups = scored.filter((item) => !finalIds.has(item.id || item.name));

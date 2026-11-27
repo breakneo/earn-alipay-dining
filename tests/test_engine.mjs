@@ -327,3 +327,34 @@ test("generateDiningPlans 拿到一家餐厅配菜即立刻回调 onShopReady，
     globalThis.fetch = originalFetch;
   }
 });
+
+test("单位聚餐/高预算场景严禁混入咖啡厅/哈根达斯/酒店本体，且优先匹配预算 75%~105% 品质档位", () => {
+  const guomaoPois = [
+    { id: "g1", name: "Peet's皮爷咖啡(国贸商城店)", cuisine: "咖啡厅", rawType: "餐饮服务;咖啡厅;咖啡厅", rating: 4.8, cost: 39, distance: 37 },
+    { id: "g2", name: "哈根达斯(国贸商城店)", cuisine: "甜品店", rawType: "餐饮服务;甜品店;甜品店", rating: 4.6, cost: 53, distance: 119 },
+    { id: "g3", name: "北京中国大饭店", cuisine: "五星级宾馆", rawType: "住宿服务;宾馆酒店;五星级宾馆|餐饮服务;餐饮相关场所;餐饮相关", rating: 4.7, cost: null, distance: 40 },
+    { id: "g4", name: "赛百味(国贸店)", cuisine: "快餐厅", rawType: "餐饮服务;快餐厅;快餐厅", rating: 4.5, cost: 25, distance: 123 },
+    { id: "g5", name: "南门小馆(国贸商城店)", cuisine: "中餐厅", rawType: "餐饮服务;中餐厅;中餐厅", rating: 4.7, cost: 67, distance: 80 },
+    { id: "g6", name: "羲和雅苑烤鸭坊(国贸商城店)", cuisine: "北京菜", rawType: "餐饮服务;中餐厅;北京菜", rating: 4.6, cost: 145, distance: 180 },
+    { id: "g7", name: "京雅堂(国贸店)", cuisine: "中餐厅", rawType: "餐饮服务;中餐厅;中餐厅", rating: 4.6, cost: 172, distance: 260 },
+    { id: "g8", name: "粤菜品质酒楼(国贸店)", cuisine: "广东菜", rawType: "餐饮服务;中餐厅;广东菜", rating: 4.5, cost: 162, distance: 310 },
+    { id: "g9", name: "GIADA Garden", cuisine: "西餐厅", rawType: "餐饮服务;外国餐厅;西餐厅", rating: 4.6, cost: 1401, distance: 71 },
+  ];
+
+  // 即使请求 10 家超过合格正餐数，也绝不能放回咖啡厅/哈根达斯/酒店本体
+  const { picked } = selectTopRestaurants(
+    guomaoPois,
+    { headcount: 8, perCapita: 175, scene: "单位聚餐", preferences: "清淡少油、要包间", radius: 2000 },
+    10
+  );
+  const names = picked.map((p) => p.name);
+  assert.ok(!names.some((n) => /咖啡|哈根达斯|中国大饭店|赛百味/.test(n)), `不应混入非正餐/快餐，实际：${names.join(",")}`);
+
+  // 前 3 名必须全部是贴合人均 175 品质档位（145/162/172）的正餐，压过不到预算一半的 67 元简餐与 1401 元超标店
+  const top3 = names.slice(0, 3);
+  assert.ok(top3.includes("羲和雅苑烤鸭坊(国贸商城店)"));
+  assert.ok(top3.includes("京雅堂(国贸店)"));
+  assert.ok(top3.includes("粤菜品质酒楼(国贸店)"));
+  assert.ok(!top3.includes("南门小馆(国贸商城店)"), "不到预算一半(¥67/¥175)的店不应排进前3");
+  assert.ok(!top3.includes("GIADA Garden"), "严重超预算(¥1401/¥175)的店不应排进前3");
+});
