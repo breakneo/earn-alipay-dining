@@ -12,11 +12,11 @@ const FALLBACK_ORIGIN = "https://eat.breakneo.dpdns.org";
 function getEndpoints() {
   if (typeof window !== "undefined") {
     const host = window.location.hostname || "";
-    const port = window.location.port || "";
-    const isStaticFallback =
-      host.endsWith("github.io") ||
-      ((host === "127.0.0.1" || host === "localhost") && (port === "8080" || port === "4173"));
-    if (!isStaticFallback) {
+    const isSameOriginEdge =
+      host === "eat.breakneo.dpdns.org" ||
+      host.endsWith(".edgeone.dev") ||
+      host.endsWith(".edgeone.cool");
+    if (isSameOriginEdge) {
       return { poi: "/api/poi", chat: "/api/chat" };
     }
   }
