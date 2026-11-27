@@ -636,17 +636,38 @@ export function buildFallbackPlan(restaurant, req, quota) {
   const vegCount = Math.min(quota.veg, 2);
   const soupCount = Math.min(quota.soupOrStaple, 1);
 
+  const usedNames = new Set();
+  const takeUnique = (list, count) => {
+    const picked = [];
+    for (const name of pickCleanDishes(list, list.length, avoidSeafood, avoidSpicy)) {
+      const key = name.replace(/[(（\[【].*?[)）\]】]/g, "").trim();
+      if (usedNames.has(key)) continue;
+      // 避免“糖醋小排”和“糖醋排骨”这类高度近义菜同时出现
+      if ([...usedNames].some((u) => (u.length >= 2 && key.includes(u.slice(0, 2))) || (key.length >= 2 && u.includes(key.slice(0, 2))))) {
+        continue;
+      }
+      usedNames.add(key);
+      picked.push(name);
+      if (picked.length >= count) break;
+    }
+    return picked;
+  };
+
   const hotCandidates = [...new Set([...tagDishes, ...lib.hot])];
-  const coldNames = pickCleanDishes(lib.cold, coldCount, avoidSeafood, avoidSpicy);
-  const hotNames = pickCleanDishes(hotCandidates, hotCount, avoidSeafood, avoidSpicy);
-  const vegNames = pickCleanDishes(lib.veg, vegCount, avoidSeafood, avoidSpicy);
-  const soupNames = pickCleanDishes(lib.soup, soupCount, avoidSeafood, avoidSpicy);
+  const coldNames = takeUnique(lib.cold, coldCount);
+  const hotNames = takeUnique(hotCandidates, hotCount);
+  const vegNames = takeUnique(lib.veg, vegCount);
+  const soupNames = takeUnique(lib.soup, soupCount);
+
+  const coldWeights = [0.62, 0.48];
+  const hotWeights = [1.68, 1.46, 1.26, 1.12];
+  const vegWeights = [0.64, 0.52];
 
   const rawItems = [
-    ...coldNames.map((name) => ({ category: "凉菜", name, reason: "清爽开胃", weight: 0.55 })),
-    ...hotNames.map((name, i) => ({ category: "硬菜", name, reason: i === 0 ? "口碑招牌" : "同桌必点", weight: 1.45 })),
-    ...vegNames.map((name) => ({ category: "素菜", name, reason: "解腻均衡", weight: 0.6 })),
-    ...soupNames.map((name) => ({ category: "汤主食", name, reason: "暖胃收尾", weight: 0.85 })),
+    ...coldNames.map((name, i) => ({ category: "凉菜", name, reason: "清爽开胃", weight: coldWeights[i] || 0.54 })),
+    ...hotNames.map((name, i) => ({ category: "硬菜", name, reason: i === 0 ? "口碑招牌" : "同桌必点", weight: hotWeights[i] || 1.2 })),
+    ...vegNames.map((name, i) => ({ category: "素菜", name, reason: "解腻均衡", weight: vegWeights[i] || 0.56 })),
+    ...soupNames.map((name) => ({ category: "汤主食", name, reason: "暖胃收尾", weight: 0.88 })),
   ];
 
   // 按门店真实人均×人数目标总价反推每道具体菜品的合理单价（不含酒水）
