@@ -177,8 +177,8 @@ export async function generateSingleShopPlan({ anchor, restaurant, req, quota, s
   const targetDishCount = Math.min(Math.max(quota.totalDishes, 4), 7);
   const systemPrompt = [
     "你是「今天吃这桌」聚餐点菜专家（支付宝口碑与高德生态）。",
-    "要求：1) 围绕传入的真实餐厅与特色标签推荐具体常见招牌菜，严禁写「招牌主菜×2」这类泛泛占位词；",
-    "2) 严格避开用户忌口，总菜数控制在目标数量内，整桌估算总价（不含酒水）应贴合该店真实人均×人数（约在目标总预算的 75%~102% 档位），体现对应预算应有的品质硬菜；",
+    "要求：1) 围绕传入的真实餐厅菜系与特色标签推荐每一道具体的真实菜名（例如「龙井虾仁」「清炖狮子头」「上汤娃娃菜」），绝对禁止输出「招牌主菜×2」「时令凉菜×2」「清炒当季时蔬」「例汤或特色主食」这类泛泛统称；",
+    "2) 严格避开用户忌口，总菜数控制在目标数量内，每道菜单独给出合理单价（不含酒水），整桌之和贴合该店真实人均×人数（约在目标总预算 75%~102% 档位）；",
     "3) 严禁编造团购精确假价，仅给支付宝口碑/高德核销策略，不提非支付宝系第三方平台；",
     "4) 仅输出合法紧凑 JSON，无多余说明。",
   ].join("\n");
@@ -214,19 +214,23 @@ export async function generateSingleShopPlan({ anchor, restaurant, req, quota, s
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      620,
+      820,
       { signal, retries: 1 }
     );
     const parsed = extractJsonPayload(raw);
     if (!parsed || !Array.isArray(parsed.dishes) || parsed.dishes.length === 0) {
       throw new Error("格式解析失败");
     }
+    const genericDishRe = /招牌主菜|爽口凉菜|当季时蔬|例汤或特色主食|门店特色菜|×\s*\d/;
     const dishes = parsed.dishes.slice(0, 8).map((d) => ({
       category: String(d.category || "推荐菜"),
-      name: String(d.name || "门店特色菜"),
+      name: String(d.name || "").trim(),
       reason: String(d.reason || "口碑必点"),
       estPrice: Math.max(Math.round(Number(d.estPrice) || 45), 10),
-    }));
+    })).filter((d) => d.name.length >= 2 && !genericDishRe.test(d.name));
+    if (dishes.length < 3) {
+      throw new Error("菜名不够具体");
+    }
     const dishSum = dishes.reduce((s, d) => s + d.estPrice, 0);
     const baseEst = estimateMealBudget({
       restaurantCost: restaurant.cost,

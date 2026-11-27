@@ -509,61 +509,173 @@ export function extractJsonPayload(rawText = "") {
   }
 }
 
+const CUISINE_DISH_LIBRARY = [
+  {
+    match: /江浙|浙江|杭帮|淮扬|江苏|上海|本帮|苏菜|江南|桐庐|宁波|温州/,
+    cold: ["水晶肴肉", "蜜汁桂花糖藕", "江南四喜烤麸", "老醋蛰头", "冰醉花雕鸡"],
+    hot: ["龙井虾仁", "东坡红烧肉", "清炖蟹粉狮子头", "松鼠桂鱼", "响油鳝糊", "西湖醋鱼", "清蒸白鱼", "葱烧大排"],
+    veg: ["上汤娃娃菜", "油焖春笋", "清炒鸡毛菜", "蒜蓉炒时蔬"],
+    soup: ["宋嫂鱼羹", "腌笃鲜", "扬州炒饭", "葱油拌面"],
+  },
+  {
+    match: /粤菜|广东|潮汕|茶餐厅|港式|顺德/,
+    cold: ["爽口凉拌云耳", "冰镇秋葵", "陈醋海蜇头", "手拍青瓜"],
+    hot: ["白切走地鸡", "蜜汁黑叉烧", "清蒸老虎斑", "避风塘大虾", "黑椒牛仔骨", "豉汁蒸排骨", "脆皮烧鹅"],
+    veg: ["白灼广东菜心", "蒜蓉炒芥兰", "上汤西洋菜"],
+    soup: ["老火例汤", "腊味煲仔饭", "干炒牛河"],
+  },
+  {
+    match: /火锅|涮肉|牛肉|串串/,
+    cold: ["凉拌脆毛肚", "拍黄瓜", "酸辣蕨根粉", "老醋花生"],
+    hot: ["鲜切吊龙牛肉", "手切鲜羊肉", "手打鲜牛肉丸", "鲜毛肚拼盘", "嫩滑匙柄牛肉", "鲜虾滑", "草原肥牛卷"],
+    veg: ["时令菌菇拼盘", "清脆娃娃菜", "鲜冬瓜配豆腐皮"],
+    soup: ["牛骨清汤锅底配宽粉", "菌菇鲜汤锅底配手工面", "红糖糍粑"],
+  },
+  {
+    match: /北京|京菜|烤鸭|官府|鲁菜/,
+    cold: ["乾隆白菜", "芥末鸭掌", "盐水鸭肝", "老北京果仁菠菜"],
+    hot: ["传统果木烤鸭", "老北京抓炒里脊", "葱烧海参", "贝勒爷烤羊肉", "赛螃蟹", "宫保鸡丁", "京酱肉丝"],
+    veg: ["清炒芥兰苗", "上汤豆苗", "干煸四季豆"],
+    soup: ["老鸭汤", "老北京炸酱面", "驴打滚拼盘"],
+  },
+  {
+    match: /川菜|湘菜|重庆|成都|湖北|鄂菜|贵州/,
+    cold: ["川北凉粉", "口水鸡（微辣可选）", "蒜泥白肉", "爽口萝卜皮"],
+    hot: ["莲藕排骨煨汤", "清蒸武昌鱼", "干锅茶树菇", "农家小炒肉", "沸腾鲈鱼", "毛血旺", "蒜蓉粉丝虾"],
+    veg: ["清炒红菜苔", "手撕包菜", "蒜蓉油麦菜"],
+    soup: ["三鲜菌菇汤", "蛋炒饭", "醪糟小汤圆"],
+  },
+  {
+    match: /日本|日料|寿司|刺身|鳗鱼|烤肉|烧肉/,
+    cold: ["和风牛油果沙拉", "中华海草", "盐水毛豆", "醋渍章鱼"],
+    hot: ["炭烤蒲烧鳗鱼", "三文鱼厚切刺身", "和牛寿喜烧", "香煎澳洲牛小排", "火炙鹅肝寿司拼盘", "盐烤青花鱼"],
+    veg: ["黄油炒时蔬", "炭烤杏鲍菇", "日式冷豆腐"],
+    soup: ["味增鲜汤", "海鲜乌冬面", "鳗鱼茶泡饭"],
+  },
+  {
+    match: /西餐|意面|牛排|法餐|意大利|外国/,
+    cold: ["布拉塔奶酪番茄沙拉", "凯撒烤鸡沙拉", "烟熏三文鱼塔塔"],
+    hot: ["炭烤澳洲肉眼牛排", "黑松露奶油意面", "慢炖红酒牛颊肉", "香草烤春鸡", "蒜香黄油大虾", "玛格丽特披萨"],
+    veg: ["蒜香橄榄油炒芦笋", "烤时蔬拼盘", "奶油焗西兰花"],
+    soup: ["奶油蘑菇浓汤", "番茄罗勒汤配法棍", "海鲜烩饭"],
+  },
+  {
+    match: /海鲜|蟹|鱼/,
+    cold: ["老醋海蜇", "葱油拌花蛤", "冰镇秋葵"],
+    hot: ["清蒸大闸蟹", "葱姜炒梭子蟹", "白灼基围虾", "清蒸多宝鱼", "蒜蓉粉丝蒸扇贝", "家烧小黄鱼"],
+    veg: ["上汤时蔬", "清炒荷兰豆", "蒜蓉空心菜"],
+    soup: ["海鲜疙瘩汤", "海鲜炒粉干", "蟹粉豆腐羹"],
+  },
+  {
+    match: /泰国|越南|东南亚/,
+    cold: ["泰式青木瓜沙拉", "越式鲜虾米纸卷", "凉拌无骨凤爪"],
+    hot: ["招牌咖喱皇炒蟹", "香茅炭烤春鸡", "炭烤猪颈肉", "菠萝海鲜炒饭", "青柠蒸海鲈鱼", "冬阴功鲜虾汤"],
+    veg: ["蒜蓉炒通菜", "虾酱炒四季豆", "清炒芥兰"],
+    soup: ["越南火车头牛肉河粉", "椰汁西米糕", "香兰叶糯米饭"],
+  },
+];
+
+const DEFAULT_DISH_SET = {
+  cold: ["老醋花生配木耳", "爽口手拍黄瓜", "葱油手撕鸡", "蜜汁糖藕"],
+  hot: ["招牌红烧肉", "清蒸海鲈鱼", "蒜蓉粉丝开背虾", "黑椒杏鲍菇牛柳", "茶树菇爆炒土鸡", "蟹粉豆腐煲"],
+  veg: ["上汤娃娃菜", "清炒时令青菜", "蒜蓉炒西兰花"],
+  soup: ["菌菇老鸡汤", "扬州蛋炒饭", "手擀鲜肉面"],
+};
+
+function pickCleanDishes(list, count, avoidSeafood, avoidSpicy) {
+  const filtered = list.filter((name) => {
+    if (avoidSeafood && /虾|蟹|鱼|海鲜|螺|贝|鳗|三文鱼|海参|海蜇|花蛤|扇贝/.test(name)) return false;
+    if (avoidSpicy && /辣|麻|毛血旺|沸腾/.test(name)) return false;
+    return true;
+  });
+  const source = filtered.length >= count ? filtered : list;
+  return source.slice(0, count);
+}
+
+/**
+ * 清理菜名中带括号或份数后缀，便于精准检索菜品图片
+ */
+export function buildDishImageUrl(dishName = "", size = "thumb") {
+  const clean = String(dishName || "")
+    .replace(/[(（\[【].*?[)）\]】]/g, "")
+    .replace(/[×xX]\d+.*$/, "")
+    .replace(/配.*$/, "")
+    .trim();
+  const q = encodeURIComponent(`${clean || "中餐美食"} ${size === "large" ? "美食 实拍" : "菜品"}`);
+  if (size === "large") {
+    return `https://cn.bing.com/th?q=${q}&w=560&h=400&c=7&rs=1&p=0`;
+  }
+  return `https://cn.bing.com/th?q=${q}&w=140&h=140&c=7&rs=1&p=0`;
+}
+
 export function buildFallbackPlan(restaurant, req, quota) {
   const est = estimateMealBudget({
     restaurantCost: restaurant.cost,
     headcount: req.headcount,
     targetPerCapita: req.perCapita,
   });
-  const tagList = String(restaurant.tag || "")
+  const pref = String(req.preferences || "");
+  const avoidSeafood = /不要海鲜|不吃海鲜|海鲜过敏/.test(pref);
+  const avoidSpicy = /不吃辣|不辣|清淡/.test(pref);
+  const fullType = `${restaurant.name || ""} ${restaurant.cuisine || ""} ${restaurant.rawType || ""}`;
+  const lib = CUISINE_DISH_LIBRARY.find((item) => item.match.test(fullType)) || DEFAULT_DISH_SET;
+
+  const tagDishes = String(restaurant.tag || "")
     .split(/[,，、;；]+/)
     .map((s) => s.trim())
-    .filter((s) => s.length >= 2 && s.length <= 12 && !/堂食|套餐|双人餐|单人餐|下午茶/.test(s));
-  const baseUnit = Math.max(Math.round(est.estimatedTotal / Math.max(quota.totalDishes, 3)), 28);
-  const dishes = [];
-  if (quota.cold > 0) {
-    dishes.push({
-      category: "凉菜",
-      name: `${restaurant.cuisine}爽口凉菜 ×${quota.cold}`,
-      reason: "先上桌垫胃，避免等热菜冷场",
-      estPrice: Math.round(baseUnit * 0.55) * quota.cold,
-    });
-  }
-  const hotName =
-    tagList.length >= 2
-      ? `${tagList.slice(0, 2).join(" / ")}（门店招牌）`
-      : tagList.length === 1
-        ? `${tagList[0]}等招牌主菜 ×${quota.hot}`
-        : `门店口碑招牌主菜 ×${quota.hot}`;
-  dishes.push({
-    category: "硬菜",
-    name: hotName,
-    reason: `按${req.headcount}人「${req.scene}」配足核心硬菜${req.preferences ? `（注意：${req.preferences}）` : ""}`,
-    estPrice: Math.round(baseUnit * 1.35) * quota.hot,
+    .filter(
+      (s) =>
+        s.length >= 2 &&
+        s.length <= 10 &&
+        !/堂食|套餐|双人餐|单人餐|下午茶|牛肉|鸡肉|料理|中餐厅|大排档|开胃菜|美食|火锅$/.test(s)
+    );
+
+  // 每道菜独立列出明确菜名，绝不出现「爽口凉菜 ×2」「招牌主菜 ×4」等泛泛占位词
+  const coldCount = Math.min(quota.cold, 2);
+  const hotCount = Math.min(quota.hot, 4);
+  const vegCount = Math.min(quota.veg, 2);
+  const soupCount = Math.min(quota.soupOrStaple, 1);
+
+  const hotCandidates = [...new Set([...tagDishes, ...lib.hot])];
+  const coldNames = pickCleanDishes(lib.cold, coldCount, avoidSeafood, avoidSpicy);
+  const hotNames = pickCleanDishes(hotCandidates, hotCount, avoidSeafood, avoidSpicy);
+  const vegNames = pickCleanDishes(lib.veg, vegCount, avoidSeafood, avoidSpicy);
+  const soupNames = pickCleanDishes(lib.soup, soupCount, avoidSeafood, avoidSpicy);
+
+  const rawItems = [
+    ...coldNames.map((name) => ({ category: "凉菜", name, reason: "清爽开胃", weight: 0.55 })),
+    ...hotNames.map((name, i) => ({ category: "硬菜", name, reason: i === 0 ? "口碑招牌" : "同桌必点", weight: 1.45 })),
+    ...vegNames.map((name) => ({ category: "素菜", name, reason: "解腻均衡", weight: 0.6 })),
+    ...soupNames.map((name) => ({ category: "汤主食", name, reason: "暖胃收尾", weight: 0.85 })),
+  ];
+
+  // 按门店真实人均×人数目标总价反推每道具体菜品的合理单价（不含酒水）
+  const targetTotal = Math.round(est.estimatedTotal * 0.92);
+  const totalWeight = rawItems.reduce((s, d) => s + d.weight, 0) || 1;
+  const dishes = rawItems.map((item) => {
+    const rawPrice = (targetTotal * item.weight) / totalWeight;
+    const estPrice = Math.max(Math.round(rawPrice / 2) * 2, item.category === "硬菜" ? 48 : 22);
+    return {
+      category: item.category,
+      name: item.name,
+      reason: item.reason,
+      estPrice,
+    };
   });
-  dishes.push({
-    category: "素菜",
-    name: `清炒当季时蔬 ×${quota.veg}`,
-    reason: "荤素平衡不腻口",
-    estPrice: Math.round(baseUnit * 0.6) * quota.veg,
-  });
-  dishes.push({
-    category: "汤主食",
-    name: `例汤或特色主食 ×${quota.soupOrStaple}`,
-    reason: "收尾压饱，控制总价不超支",
-    estPrice: Math.round(baseUnit * 0.85) * quota.soupOrStaple,
-  });
+
+  const estimatedTotal = dishes.reduce((s, d) => s + d.estPrice, 0) || est.estimatedTotal;
+  const estimatedPerCapita = Math.round(estimatedTotal / Math.max(req.headcount, 1));
 
   return {
     restaurantId: restaurant.id,
     restaurantName: restaurant.name,
     highlightTag: restaurant.matchReasons?.[0] || "口碑优选",
-    whyChoose: `${restaurant.name} 位于${restaurant.address || "所选地标附近"}，评分 ${restaurant.rating || "暂无"}，参考人均约 ¥${est.estimatedPerCapita}，与本次 ${req.headcount} 人「${req.scene}」贴合度高。`,
+    whyChoose: `${restaurant.name} 位于${restaurant.address || "所选地标附近"}，评分 ${restaurant.rating || "暂无"}，参考人均约 ¥${est.estimatedPerCapita}，与本次 ${req.headcount} 人「${req.scene}」预算档位贴合。`,
     dishes,
-    estimatedTotal: est.estimatedTotal,
-    estimatedPerCapita: est.estimatedPerCapita,
+    estimatedTotal,
+    estimatedPerCapita,
     groupBuyStrategy: `建议到店前先在支付宝口碑或高德查看该店是否有「满100减代金券」或「${req.headcount <= 4 ? "2-4人" : "4-6人"}团购套餐」；若套餐菜品有忌口，优先买代金券叠加单点更灵活。`,
-    avoidTip: `建议总菜数控制在 ${quota.totalDishes} 道左右（${quota.formulaText}），不够再加 1 道主食，避免点多浪费。`,
+    avoidTip: `建议总菜数控制在 ${dishes.length} 道左右，不够再加 1 道主食，避免点多浪费。`,
     isFallback: true,
   };
 }
