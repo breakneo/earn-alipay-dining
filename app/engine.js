@@ -431,7 +431,19 @@ export function buildAlipayAaScheme() {
 }
 
 /**
- * 支付宝内置搜索官方 Scheme（appId=20001003），手机端点击可直接拉起支付宝检索该店口碑/团购
+ * 支付宝阿宝（jinni）官方直达 Scheme：
+ * - 支付宝端内（AlipayClient）：直接进入阿宝会话页
+ * - 外部手机浏览器：直接拉起支付宝并切至阿宝界面（附 10.8.56 低版本升级兜底）
+ */
+export function buildAlipayAbaoScheme({ isAlipayClient = false } = {}) {
+  if (isAlipayClient) {
+    return "alipays://platformapi/startApp?appId=20000001&target=jinni&JinniAppId=86000001&action=jumpToChatList";
+  }
+  return "alipays://platformapi/startApp?appId=20000001&target=jinni&clientVersion=10.8.56&errorUrl=https://render.alipay.com/p/s/updatex?source=QueryClientVersion";
+}
+
+/**
+ * 支付宝内置搜索官方 Scheme（appId=20001003），用于检索指定门店口碑/团购
  */
 export function buildAlipaySearchScheme(restaurant) {
   const kw = `${restaurant?.name || ""} 团购`.trim();

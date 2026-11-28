@@ -9,17 +9,17 @@ import {
   calculateAaSplit,
   buildAbaoPrompt,
   buildAmapUrl,
-  buildAlipaySearchScheme,
+  buildAlipayAbaoScheme,
   buildInviteText,
   buildIcsCalendar,
-} from "./engine.js?v=20261127g";
+} from "./engine.js?v=20261128a";
 import {
   fetchRealRestaurants,
   generateDiningPlans,
   generateSingleShopPlan,
   compareGroupBuyWithAI,
   buildOverallAdvice,
-} from "./api.js?v=20261127g";
+} from "./api.js?v=20261128a";
 
 const PRESETS = {
   hz: { loc: "杭州黄龙万科中心", radius: "2000", count: "3", people: "4", mode: "per_capita", budget: "120", scene: "朋友小聚", pref: "不吃辣" },
@@ -124,6 +124,10 @@ function escapeHtml(str = "") {
 
 function isMobileDevice() {
   return /Android|iPhone|iPad|iPod|HarmonyOS|AlipayClient|MicroMessenger/i.test(navigator.userAgent || "");
+}
+
+function isAlipayClient() {
+  return /AlipayClient/i.test(navigator.userAgent || "");
 }
 
 /* =========================
@@ -863,13 +867,13 @@ function initEvents() {
       const idx = Number(abaoBtn.dataset.abaoIdx);
       const shop = state.picked[idx];
       const prompt = buildAbaoPrompt(shop, state.req.headcount, state.req.perCapita);
-      const schemeUrl = buildAlipaySearchScheme(shop);
+      const schemeUrl = buildAlipayAbaoScheme({ isAlipayClient: isAlipayClient() });
       copyText(prompt, "");
       if (isMobileDevice()) {
-        showToast("正在拉起支付宝搜索该店团购（问阿宝词已自动复制）");
+        showToast("正在拉起支付宝阿宝（提问词已自动复制，进入后粘贴发送）");
         window.location.href = schemeUrl;
       } else {
-        showToast("已复制问阿宝指令；在手机端点击此按钮可直接拉起支付宝");
+        showToast("已复制问阿宝指令；在手机端点击此按钮可直接拉起支付宝阿宝");
       }
       return;
     }

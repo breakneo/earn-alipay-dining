@@ -12,6 +12,7 @@ import {
   calculateAaSplit,
   buildAbaoPrompt,
   buildAmapUrl,
+  buildAlipayAbaoScheme,
   buildAlipaySearchScheme,
   buildInviteText,
   buildIcsCalendar,
@@ -217,6 +218,16 @@ test("buildAbaoPrompt 不含竞品字样，buildInviteText 简洁不含点菜与
 
   const url = buildAmapUrl(r);
   assert.ok(url.startsWith("https://uri.amap.com/marker?") && url.includes("120.128,30.275"));
+
+  const abaoExternalUrl = buildAlipayAbaoScheme({ isAlipayClient: false });
+  assert.ok(
+    abaoExternalUrl.startsWith("alipays://platformapi/startApp?appId=20000001&target=jinni&clientVersion=10.8.56")
+  );
+  const abaoInAppUrl = buildAlipayAbaoScheme({ isAlipayClient: true });
+  assert.equal(
+    abaoInAppUrl,
+    "alipays://platformapi/startApp?appId=20000001&target=jinni&JinniAppId=86000001&action=jumpToChatList"
+  );
 
   const alipayUrl = buildAlipaySearchScheme(r);
   assert.ok(alipayUrl.startsWith("alipays://platformapi/startapp?appId=20001003&keyword="));
